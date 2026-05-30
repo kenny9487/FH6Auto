@@ -338,6 +338,7 @@ class FH_UltimateBot(ctk.CTk):
 
         self.is_running = False
         self.current_thread = None
+        self.is_paused = False  # <--- 【新增】全局暂停状态
 
         self.race_counter = 0
         self.car_counter = 0
@@ -860,6 +861,17 @@ class FH_UltimateBot(ctk.CTk):
         self.le_restart_cmd = ctk.CTkEntry(self.global_settings_frame, width=250, height=28)
         self.le_restart_cmd.insert(0, self.config.get("restart_cmd", "start steam://run/2483190"))
         self.le_restart_cmd.pack(side="left", padx=(0, 20))
+        # ====== 【新增】：测试自动开机流程按钮 ======
+        self.btn_test_boot = ctk.CTkButton(
+            self.global_settings_frame, 
+            text="🔧 测试启动流程", 
+            fg_color="#8E44AD", 
+            hover_color="#7D3C98", 
+            width=110, 
+            height=28, 
+            command=self.start_test_boot
+        )
+        self.btn_test_boot.pack(side="left", padx=(0, 20))
         
         # =================================
 
@@ -948,6 +960,10 @@ class FH_UltimateBot(ctk.CTk):
         # 3. 按钮区 (靠右排列)
         self.btn_mini_stop = ctk.CTkButton(self.mini_frame, text="⏸ 停止 (F8)", fg_color="#DA3633", hover_color="#B02A37", width=90, font=ctk.CTkFont(weight="bold"), command=self.stop_all)
         self.btn_mini_stop.pack(side="left", fill="y", padx=5, pady=10)
+
+        # ====== 【新增】迷你面板上的暂停按钮 ======
+        self.btn_mini_pause = ctk.CTkButton(self.mini_frame, text="⏸ 暂停 (F9)", fg_color="#F1C40F", hover_color="#D4AC0D", width=90, font=ctk.CTkFont(weight="bold"), command=self.toggle_pause)
+        self.btn_mini_pause.pack(side="left", fill="y", padx=5, pady=10)
 
         self.btn_mini_support = ctk.CTkButton(self.mini_frame, text="❤ 支持", fg_color="#F97316", hover_color="#EA580C", width=60, font=ctk.CTkFont(weight="bold"), command=self.open_support_window)
         self.btn_mini_support.pack(side="left", fill="y", padx=(5, 10), pady=10)
@@ -1176,6 +1192,7 @@ class FH_UltimateBot(ctk.CTk):
         SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
 
     def hw_press(self, key, delay=0.08):
+        self.check_pause()  # <--- 【新增】如果正在暂停，脚本会在此处无限等待直到恢复
         if not self.is_running:
             return
         self.hw_key_down(key)
@@ -1205,6 +1222,7 @@ class FH_UltimateBot(ctk.CTk):
         cmd = Input(ctypes.c_ulong(0), ii_)
         SendInput(1, ctypes.pointer(cmd), ctypes.sizeof(cmd))
     def game_click(self, pos, double=False):
+        self.check_pause()  # <--- 【新增】拦截鼠标点击
         if not self.is_running or not pos:
             return
         x, y = int(pos[0]), int(pos[1])
@@ -1466,6 +1484,7 @@ class FH_UltimateBot(ctk.CTk):
             return
 
         self.is_running = False
+        self.is_paused = False  # <--- 【新增】彻底停止时必须解除暂停锁
 
         for key in DIK_CODES.keys():
             self.hw_key_up(key)
@@ -1508,12 +1527,86 @@ class FH_UltimateBot(ctk.CTk):
 
         self.ui_call(restore_ui)
         self.log("!!! 任务已停止，所有物理按键状态已强制重置")
+    def start_test_boot(self):
+        """独立运行的测试开机流程"""
+        if self.is_running:
+            self.log("已有任务正在运行，请先点击停止后再测试启动流程！")
+            return
+            
+        self.is_running = True
+        self.save_config()
+        
+        # ==========================================
+        # 【新增修复】：隐藏大窗的所有元素，进入迷你模式
+        # ==========================================
+        self.config_frame.pack_forget()
+        self.global_settings_frame.pack_forget()
+        self.calc_frame.pack_forget()
+        self.top_container.pack_forget()
+        if hasattr(self, "bottom_frame"):
+            self.bottom_frame.pack_forget()
+        self.btn_support.pack_forget()
 
+        # 显示新的迷你横向 UI
+        self.mini_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # 启动计时器与状态文字更新
+        self.update_running_ui("测试启动流程...")
+        self.start_time = time.time()
+        self.update_timer()
+        # ==========================================
+
+        self.log("====== 开始独立测试自动开机与识别流程 ======")
+        
+        def test_runner():
+            success = self.restart_game_and_boot(force_test=True)
+            if success:
+                self.log("✅ 测试结束：自动开机、A/B/C状态机识别并到达菜单完美跑通！")
+            else:
+                self.log("❌ 测试结束：自动开机流程失败，请检查截图或日志。")
+            self.stop_all() # 测试完毕自动停止脚本，自动恢复回大窗口状态
+            
+        self.current_thread = threading.Thread(target=test_runner, daemon=True)
+        self.current_thread.start()
+    # ==========================================
+    # --- 【新增】暂停与恢复逻辑 ---
+    # ==========================================
+    def toggle_pause(self):
+        if not self.is_running:
+            return
+            
+        self.is_paused = not self.is_paused
+        
+        if self.is_paused:
+            self.log("⏸ 任务已暂停 (按 F9 或点击按钮恢复)")
+            # 强制松开所有可能按住的按键，防止车自己开走或UI乱跳
+            for key in ["w", "e", "y", "enter", "esc", "up", "down", "left", "right", "space", "backspace"]:
+                self.hw_key_up(key)
+            try:
+                pydirectinput.mouseUp()
+            except Exception:
+                pass
+            # 改变按钮UI
+            if hasattr(self, "btn_mini_pause"):
+                self.ui_call(self.btn_mini_pause.configure, text="▶ 继续 (F9)", fg_color="#2EA043", hover_color="#238636")
+        else:
+            self.log("▶ 任务已恢复")
+            if hasattr(self, "btn_mini_pause"):
+                self.ui_call(self.btn_mini_pause.configure, text="⏸ 暂停 (F9)", fg_color="#F1C40F", hover_color="#D4AC0D")
+
+    def check_pause(self):
+        """核心阻塞器：任何动作前调用此方法，如果是暂停状态，将在此无限等待"""
+        while self.is_paused and self.is_running:
+            time.sleep(0.1)
+
+    
     def start_hotkey_listener(self):
         def hotkey_thread():
             def on_press(k):
                 if k == keyboard.Key.f8:
                     self.stop_all()
+                elif k == keyboard.Key.f9:  # <--- 【新增】F9 快捷键
+                    self.toggle_pause()
 
             with keyboard.Listener(on_press=on_press) as listener:
                 listener.join()
@@ -1596,6 +1689,12 @@ class FH_UltimateBot(ctk.CTk):
                     pt = win32gui.ClientToScreen(hwnd, (0, 0))
                     gx, gy = pt[0], pt[1]
                     gw, gh = client_rect[2], client_rect[3]
+                    # ====== 【核心修复】：拦截启动小窗/防作弊闪屏 ======
+                    # 如果窗口宽度和高度太小，说明绝对不是正常的游戏主画面
+                    if gw < 1000 or gh < 600:
+                        self.log(f"拦截到过小窗口 ({gw}x{gh})，判定为启动闪屏，等待主窗口加载...")
+                        return False 
+                    # ====================================================
                     self.update_regions_by_window(gx, gy, gw, gh)
 
                     # 2. 获取该窗口所在的物理显示器边界
@@ -1653,67 +1752,150 @@ class FH_UltimateBot(ctk.CTk):
 
         return False
 
-    def restart_game_and_boot(self):
-        auto_restart = getattr(self, "var_auto_restart", None)
-        if auto_restart is None or not auto_restart.get():
-            self.log("未开启自动重启，任务结束。")
-            return False
+    def restart_game_and_boot(self, force_test=False):
+        # 除非点击了测试按钮(force_test)，否则检查设置里是否允许自动重启
+        if not force_test:
+            auto_restart = getattr(self, "var_auto_restart", None)
+            if auto_restart is None or not auto_restart.get():
+                self.log("未开启自动重启，任务结束。")
+                return False
 
-        self.log("触发自动重启机制！正在拉起游戏...")
+        self.log("触发启动机制！正在拉起游戏...")
         try:
             cmd_widget = getattr(self, "le_restart_cmd", None)
             cmd_str = cmd_widget.get() if cmd_widget else self.config.get("restart_cmd", "start steam://run/2483190")
             os.system(cmd_str)
         except Exception as e:
-            self.log(f"执行重启命令失败: {e}")
+            self.log(f"执行启动命令失败: {e}")
             return False
 
-        self.log("等待游戏启动加载 (10秒)...")
-        for _ in range(10):
-            if not self.is_running:
-                return False
+        self.log("等待游戏进程出现 (最多60秒)...")
+        process_found = False
+        for _ in range(120):
+            if hasattr(self, "check_pause"): self.check_pause()
+            if not self.is_running: return False
+            if self.check_and_focus_game():
+                process_found = True
+                break
             time.sleep(1)
+            
+        if not process_found:
+            self.log("未检测到游戏进程，启动失败。")
+            return False
 
-        self.log("开始持续检测开机界面元素 (限制5分钟)...")
-        for _ in range(300):
-            if not self.is_running:
-                return False
+        self.log("游戏进程已启动，进入动态识别阶段 (限制5分钟)...")
+        start_time = time.time()
+        
+        passed_screen_1 = False      # 记录是否已经按过画面1的回车
+        last_continue_time = 0       # 记录最后一次看到/点击“继续按钮”的时间戳
 
-            if self.find_image("horizon6.png", threshold=0.6):
-                self.log("识别到欢迎界面，按下回车。")
-                self.hw_press("enter")
-                time.sleep(4)
-                continue
+        while self.is_running and time.time() - start_time < 300:
+            if hasattr(self, "check_pause"): self.check_pause()
 
+            # ==============================
+            # 画面1：寻找左下角 horizon6.png -> 按回车
+            # ==============================
+            if not passed_screen_1:
+                pos_h6 = None
+                
+                # 策略A：透明图识别
+                pos_h6 = self.find_image_transparent("horizon6.png", region=self.regions["全界面"], threshold=0.60, fast_mode=False)
+                
+                # 策略B：边缘轮廓识别兜底！
+                if not pos_h6:
+                    try:
+                        screen_bgr = self.capture_region(self.regions["全界面"])
+                        tpl_bgr, _ = self.load_template("horizon6.png")
+                        if tpl_bgr is not None:
+                            screen_edge = self.to_edge_image(screen_bgr)
+                            tpl_edge = self.to_edge_image(tpl_bgr)
+                            
+                            for scale in self.get_scales_to_try(fast_mode=False):
+                                t_e = tpl_edge if scale == 1.0 else cv2.resize(tpl_edge, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                                h, w = t_e.shape[:2]
+                                if h > screen_edge.shape[0] or w > screen_edge.shape[1] or h < 5 or w < 5: continue
+                                
+                                res = cv2.matchTemplate(screen_edge, t_e, cv2.TM_CCOEFF_NORMED)
+                                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                                
+                                if max_val >= 0.40: 
+                                    self.log(f"[轮廓黑科技] 无视背景命中！得分: {max_val:.2f} 缩放: {scale:.2f}")
+                                    pos_h6 = (max_loc[0] + w//2 + self.regions["全界面"][0], max_loc[1] + h//2 + self.regions["全界面"][1])
+                                    break
+                    except Exception:
+                        pass
+                
+                if pos_h6:
+                    self.log("✅ 成功识别到 画面1 (horizon6.png)，按下【回车键】...")
+                    time.sleep(1)
+                    for _ in range(2):
+                        self.hw_press("enter")
+                        time.sleep(1)
+                    passed_screen_1 = True
+                    # 激活画面2的倒计时机制，如果在后续的寻找中一直没看到画面2，也会在30秒后尝试进菜单
+                    last_continue_time = time.time() 
+                    self.log("已确认画面1，强制等待 10 秒等待画面2加载...")
+                    time.sleep(10) # 等待10秒
+                    continue
+                else:
+                    self.log("未找到画面1。正在使用全比例深度扫描...")
 
-            pos_con = self.find_any_image(["continue-w.png", "continue-b.png"], threshold=0.6)
-            if pos_con:
-                self.log("识别到继续游戏，点击进入！")
-                self.game_click(pos_con)
-                time.sleep(10)
-                self.log("尝试按 ESC 唤出菜单...")
-                self.hw_press("esc")
-                time.sleep(2)
-                if self.enter_menu():
-                    self.log("成功重连并进入菜单，准备恢复执行！")
-                    return True
-                return False
+            # ==============================
+            # 画面2：寻找右下角 continue-b 或 continue-w -> 死磕点击
+            # ==============================
+            # 只有在通过了画面1的前提下，才去寻找画面2
+            if passed_screen_1:
+                pos_continue = self.find_any_image_gray(["continue-b.png", "continue-w.png"], threshold=0.75)
+                if pos_continue:
+                    self.log("识别到 画面2 (继续按钮)，进行点击...")
+                    self.game_click(pos_continue)
+                    
+                    # 【核心逻辑】：只要点击了，就刷新时间戳！
+                    last_continue_time = time.time() 
+                    
+                    time.sleep(3.0) # 点击后过3秒再试，只要有就继续点
+                    continue
 
-            time.sleep(2.0)
+                # ==============================
+                # 状态转化：进入漫游与菜单呼出
+                # ==============================
+                # 如果当前时间 距离【最后一次点击画面2的时间】已经超过了 30秒，且期间再也没找到过
+                time_since_last_seen = time.time() - last_continue_time
+                if time_since_last_seen >= 30.0:
+                    self.log("✅ 已经连续 30 秒未再发现继续按钮，判定为漫游载入完毕！开始尝试进入菜单...")
+                    
+                    if getattr(self, "enter_menu")(): 
+                        self.log("🎉 验证成功：已成功进入游戏主菜单！启动流程完美结束。")
+                        return True
+                    else:
+                        self.log("普通进入菜单失败(可能还在黑屏或有新弹窗)，重置 30秒倒计时，继续观察...")
+                        # 如果没进成功，重置时间戳，脚本会继续找画面2，或者再等30秒重试进菜单
+                        last_continue_time = time.time()
+            
+            time.sleep(1.0) # 每次总循环休息1秒，防止CPU占用过高
 
-        self.log("自动重启超时(2分钟未进入漫游)，放弃抢救。")
+        self.log("自动启动超时(5分钟)，放弃抢救。")
         return False
 
 
     def attempt_recovery(self):
         self.log("任务执行异常中断，准备执行断点恢复流程...")
         if not self.check_and_focus_game():
+            # 游戏没开或者进程没了，直接走重启流程
             if not self.restart_game_and_boot():
                 return False
         else:
-            if not self.recover_to_menu():
-                return False
-
+            # 进程还在，使用【高级状态机】尝试动态退回
+            if not self.advanced_enter_menu():
+                self.log("高级动态退回失败(可能游戏卡死或致命报错)，准备强杀进程并重启...")
+                try:
+                    os.system('taskkill /F /IM forzahorizon6.exe /T')
+                    time.sleep(4)
+                except Exception: pass
+                
+                # 杀进程后重新拉起
+                if not self.restart_game_and_boot():
+                    return False
         self.log("环境重置成功！即将从中断处继续剩余任务。")
         return True
 
@@ -1772,7 +1954,70 @@ class FH_UltimateBot(ctk.CTk):
             
         self.log("60 次 ESC 尝试均未进入菜单，请检查游戏状态。")
         return False
-    
+    def advanced_enter_menu(self):
+        """
+        高级状态机退回：专门用于故障恢复。
+        能够识别中途的特定弹窗、中间过渡画面，并执行点击，没找到目标才按 ESC。
+        """
+        self.log("正在使用【高级恢复模式】尝试退回主菜单...")
+        
+        # ==========================================
+        # 动态读取 images/obstacles/ 里的所有图片
+        # ==========================================
+        obstacles_dir = os.path.join("images", "obstacles")
+        dynamic_obstacles = []
+        
+        # 检查文件夹是否存在
+        if os.path.exists(obstacles_dir):
+            for file in os.listdir(obstacles_dir):
+                # 只要是 png 或 jpg 格式的图片，统统加进来
+                if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    # 拼成 "obstacles/文件名.png"，这样 find_any_image_gray 就能正确找到路径
+                    dynamic_obstacles.append(f"obstacles/{file}")
+        
+        if not dynamic_obstacles:
+            self.log("提示：images/obstacles/ 文件夹为空或不存在，将只使用 ESC 退回。")
+        # 连续尝试 80 次，处理较长的随机过程
+        for i in range(80):
+            if hasattr(self, "check_pause"): self.check_pause() # 兼容暂停功能
+            if not self.is_running:
+                return False
+                
+            # 1. 终极判断：是不是已经在菜单了？
+            if self.is_in_menu():
+                self.log(f"成功定位到菜单锚点！(尝试次数: {i + 1})")
+                time.sleep(0.5)
+                return True
+
+            # 2. 致命错误排查 (检测到显存不足，强制休息 10 分钟)
+            if self.find_image_gray("VRAMNE.png", region=self.regions["全界面"], threshold=0.75, fast_mode=True):
+                self.log("!!! 严重警告: 检测到显存不足 (VRAMNE.png) 报错！")
+                self.log("为保护硬件并恢复显存，强制机器冷却 10 分钟 (600秒)...")
+                
+                # 安全的 10 分钟休眠，期间允许随时点击停止(F8)
+                for _ in range(600):
+                    if hasattr(self, "check_pause"): self.check_pause()
+                    if not self.is_running: return False
+                    time.sleep(1)
+                    
+                self.log("10 分钟冷却完毕！准备强杀进程并重启游戏...")
+                return False
+
+            # 3. 动态扫描所有可能的弹窗 / 需要点击的中间图片
+            pos_obs = self.find_any_image_gray(dynamic_obstacles, region=self.regions["全界面"], threshold=0.75, fast_mode=True)
+            if pos_obs:
+                self.log(f"退回途中检测到已知图片/弹窗，点击推进... ({i+1}/80)")
+                self.game_click(pos_obs)
+                time.sleep(1.5) # 给画面跳转留出动画时间
+                continue # 点击后，跳过本轮，不要按 ESC
+                
+            # 4. 如果既没进菜单，也没看到特定的图片，说明处于常规界面，按 ESC 退回
+            self.log(f"未在主菜单且无已知特定图片，按下 ESC... ({i + 1}/80)")
+            self.hw_press("esc")
+            time.sleep(1.2) # 给游戏一点动画加载时间
+            
+        self.log("80 次动态尝试均未进入菜单，高级退回失败。")
+        return False
     # ==========================================
     # --- 图像寻找 ---
     # ==========================================
@@ -2238,7 +2483,7 @@ class FH_UltimateBot(ctk.CTk):
                 # 保证在有多个相同目标时，绝对按顺序点击！
                 # ==========================================
                 points = list(zip(*loc[::-1]))
-                points.sort(key=lambda p: (p[1] // 50, p[0])) 
+                points.sort(key=lambda p: (p[0] // 50, p[1])) 
 
                 checked_points = set()
 
@@ -3070,9 +3315,62 @@ class FH_UltimateBot(ctk.CTk):
             finished = False
             timeout_triggered = False      # 新增：标记是否触发了120秒超时
 
+            driving_keys_held = True # <--- 【新增】标记油门状态
+
             while self.is_running:
+                # ====== 【新增】跑图专用暂停处理逻辑 ======
+                if self.is_paused:
+                    if driving_keys_held: # 刚进入暂停，松开油门
+                        self.hw_key_up("w")
+                        self.hw_key_up("up")
+                        driving_keys_held = False
+                    self.check_pause() # 阻塞在此处
+                    # 从暂停中恢复，如果还没跑完，重新按下油门
+                    if self.is_running:
+                        self.hw_key_down("w")
+                        self.hw_key_down("up")
+                        driving_keys_held = True
+                        
+                    # 避免恢复瞬间触发超时，重置计时器
+                    race_start_time = time.time() 
+                    last_like_chk = time.time()
+                    last_chk = time.time()
+                    continue 
+                # =========================================
                 now = time.time()
-                
+
+                if now - last_vram_chk >= 2.0:
+                    pos_vram = self.find_image_gray("VRAMEN.png", region=self.regions["中间"], threshold=0.75, fast_mode=True)
+                    if pos_vram:
+                        self.log("致命异常：检测到爆显存！准备强杀进程进行冷却...")
+                        # 1. 马上松开所有按键
+                        self.hw_key_up("w")
+                        self.hw_key_up("up")
+                        driving_keys_held = False
+                        
+                        # 2. 强杀游戏进程 (使用通配符确保不管地平线几代都能杀掉)
+                        self.log("正在强行结束游戏进程...")
+                        os.system("taskkill /F /IM forzahorizon*.exe /T")
+                        
+                        # 3. 10分钟(600秒)冷却期，期间打碎循环确保脚本可被停止/暂停
+                        self.log("进入 10 分钟显存降温冷却期...")
+                        for m in range(10):
+                            self.log(f"显存冷却中... 剩余 {10 - m} 分钟")
+                            for s in range(60):
+                                if not self.is_running: return False
+                                if hasattr(self, "check_pause"): self.check_pause()
+                                time.sleep(1)
+                                
+                        # 4. 冷却完毕，重新启动并重组赛事
+                        self.log("冷却完毕，尝试重新拉起游戏...")
+                        if hasattr(self, "restart_game_and_boot") and self.restart_game_and_boot():
+                            self.log("重启并进菜单成功！脱离了赛事，需要重新执行输入代码找图等前置流程...")
+                            # 递归调用逻辑：因为 race_counter 没变，直接重新跑一遍 logic_race 完美接续进度
+                            return self.logic_race(target_count)
+                        else:
+                            self.log("游戏重启失败或超时，结束任务。")
+                            return False
+                    last_vram_chk = now
                 # 【新增逻辑】：120秒超时防卡死检测
                 if now - race_start_time > 120.0:
                     self.log("跑图超时(已超过120秒)！触发强制重开赛事逻辑...")
