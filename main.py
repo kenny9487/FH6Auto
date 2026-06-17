@@ -89,7 +89,7 @@ LOG_FILE = os.path.join(APP_DIR, "bot_log.txt")
 CACHE_DIR = os.path.join(APP_DIR, "cache")
 TEMPLATE_CACHE_FILE = os.path.join(CACHE_DIR, "template_cache.pkl")
 TEMPLATE_META_FILE = os.path.join(CACHE_DIR, "template_meta.json")
-CURRENT_VERSION = "1.1.7"
+CURRENT_VERSION = "1.1.7.1"
 def auto_extract_configs():
     os.makedirs(CONFIG_DIR, exist_ok=True)
     
@@ -4206,16 +4206,16 @@ class FH_UltimateBot(ctk.CTk):
             else:
                 self.log("进入设计与喷涂.")
                 # 寻找并点击设计与喷涂
-                pos_dp = self.wait_for_image_gray("DandP.png", region=self.regions["全界面"], threshold=0.70, timeout=8, interval=0.3, fast_mode=True)
+                pos_dp = self.wait_for_image_gray("DandP.png", region=self.regions["全界面"], threshold=0.70, timeout=5, interval=0.3, fast_mode=True)
                 if pos_dp:
                     self.game_click(pos_dp)
-                    time.sleep(1.5)
+                    time.sleep(0.5)
                 else:
-                    self.log("未找到设计与喷涂(DandP.png)")
+                    self.log("未找到设计与喷涂")
                     return False
                 
                 # 寻找并点击选择车辆
-                pos_choose = self.wait_for_image_gray("choosecar.png", region=self.regions["全界面"], threshold=0.70, timeout=8, interval=0.3, fast_mode=True)
+                pos_choose = self.wait_for_image_gray("choosecar.png", region=self.regions["全界面"], threshold=0.70, timeout=5, interval=0.3, fast_mode=True)
                 if pos_choose:
                     self.game_click(pos_choose)
                     time.sleep(2.0)
@@ -4321,13 +4321,13 @@ class FH_UltimateBot(ctk.CTk):
                 self.memory_car_page = 0 # 没找到说明车刷完了，清零记忆
                 return False
             
-            if "模式 1" in cj_mode_str:
+            if "模式1" in cj_mode_str:
                 # ===== 模式 1: 原逻辑 - 找 rc.png 按钮，找不到按回车 =====
                 time.sleep(0.5)
                 self.log("尝试寻找'上车'按钮...")
 
                 pos_rc = None
-                pos_rc = self.wait_for_image_gray("rc.png", region=self.regions["全界面"], threshold=0.70, timeout=0.5, interval=0.1, fast_mode=True)
+                pos_rc = self.wait_for_image_gray("rc.png", region=self.regions["全界面"], threshold=0.70, timeout=1.5, interval=0.1, fast_mode=True)
                 
                 if pos_rc:
                     self.log("点击上车")
@@ -4338,7 +4338,7 @@ class FH_UltimateBot(ctk.CTk):
                     self.hw_press("enter")
                     time.sleep(1.0)
                     self.hw_press("enter")
-                    time.sleep(1.0)
+                    time.sleep(2.0)
             else:
                 # ===== 模式 2: 快速处理 - 等待 0.5 秒后按 1 次回车 =====
                 time.sleep(0.5)
@@ -4349,7 +4349,7 @@ class FH_UltimateBot(ctk.CTk):
 
 
             pos_sjy = None
-            for _ in range(20):
+            for _ in range(30):
                 if not self.is_running:
                     return False
 
