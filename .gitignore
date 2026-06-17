@@ -9,6 +9,7 @@
 bot_config.json
 bot_log.txt
 *.ahk
+*copy*.py
 
 # ========================
 # 3. 屏蔽打包的临时过程文件和内部资源

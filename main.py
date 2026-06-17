@@ -89,7 +89,7 @@ LOG_FILE = os.path.join(APP_DIR, "bot_log.txt")
 CACHE_DIR = os.path.join(APP_DIR, "cache")
 TEMPLATE_CACHE_FILE = os.path.join(CACHE_DIR, "template_cache.pkl")
 TEMPLATE_META_FILE = os.path.join(CACHE_DIR, "template_meta.json")
-CURRENT_VERSION = "1.1.6.3"
+CURRENT_VERSION = "1.1.7"
 def auto_extract_configs():
     os.makedirs(CONFIG_DIR, exist_ok=True)
     
@@ -338,13 +338,14 @@ class FH_UltimateBot(ctk.CTk):
 
         self.is_running = False
         self.current_thread = None
-        self.is_paused = False  # <--- 【新增】全局暂停状态
+        self.is_paused = False  #全局暂停状态
 
         self.race_counter = 0
         self.car_counter = 0
         self.cj_counter = 0
         self.sc_count = 0
         self.global_loop_current = 0
+        self.detail_state_confirmed = False  #初始化详情状态锁定标识
 
         self.template_cache = {}
         self.scaled_template_cache = {}
@@ -469,7 +470,10 @@ class FH_UltimateBot(ctk.CTk):
             "share_code": "890169683", 
             "auto_restart": False,
             "restart_cmd": "start steam://run/2483190", 
-            "sell_mode": 1 
+            "sell_mode": 1,
+            "cj_mode": 1,  
+            "auto_close_game": False, 
+            "auto_shutdown": False    
         }
         ext_path = USER_CONFIG_FILE
         # 2. 读取用户的 config.json，并与底本合并（自动补全缺失项）
@@ -508,6 +512,14 @@ class FH_UltimateBot(ctk.CTk):
                     self.config["sell_mode"] = 1
                 else:
                     self.config["sell_mode"] = 2
+            #保存抽奖模式
+            if hasattr(self, "opt_cj_mode"):
+                cj_val = self.opt_cj_mode.get()
+                if "模式1" in cj_val:
+                    self.config["cj_mode"] = 1
+                else:
+                    self.config["cj_mode"] = 2
+
         except Exception:
             pass
 
@@ -517,6 +529,9 @@ class FH_UltimateBot(ctk.CTk):
         self.config["chk_4"] = self.var_chk4.get()
         self.config["auto_restart"] = self.var_auto_restart.get()
         self.config["restart_cmd"] = self.le_restart_cmd.get().strip()
+        if hasattr(self, "var_auto_close"):
+            self.config["auto_close_game"] = self.var_auto_close.get()
+            self.config["auto_shutdown"] = self.var_auto_shutdown.get()
         try:
             if hasattr(self, "entry_calc_a"):
                 self.config["calc_a"] = self.entry_calc_a.get().strip()
@@ -730,7 +745,7 @@ class FH_UltimateBot(ctk.CTk):
         left_cj.pack(side="left", padx=10)
 
         ctk.CTkLabel(left_cj, text="3. 超级抽奖", font=ctk.CTkFont(weight="bold", size=20)).pack(pady=(0, 8))
-
+        
         self.btn_cj = ctk.CTkButton(
             left_cj,
             text="开始",
@@ -742,7 +757,25 @@ class FH_UltimateBot(ctk.CTk):
             command=lambda: self.start_pipeline("cj"),
         )
         self.btn_cj.pack(pady=5)
-
+        # ====== 超级抽奖模式下拉选择 ======
+        self.opt_cj_mode = ctk.CTkOptionMenu(
+            left_cj,
+            values=["模式1: 从我的车辆开始", "模式2: 从设计与喷涂开始"],
+            width=160,
+            height=28,
+            corner_radius=6,
+            font=ctk.CTkFont(size=12),
+            fg_color="#8E44AD",
+            button_color="#7D3C98",
+            button_hover_color="#6C3483"
+        )
+        saved_cj_mode = self.config.get("cj_mode", 1)
+        if str(saved_cj_mode) == "1" or "模式1" in str(saved_cj_mode):
+            self.opt_cj_mode.set("模式1: 从我的车辆开始")
+        else:
+            self.opt_cj_mode.set("模式2: 从设计与喷涂开始")
+        self.opt_cj_mode.pack(pady=(0, 5))
+        # ==========================================
         self.entry_cj = ctk.CTkEntry(left_cj, width=95, height=34, justify="center", corner_radius=8)
         self.entry_cj.insert(0, str(self.config.get("cj_count", 30)))
         self.entry_cj.pack(pady=5)
@@ -814,7 +847,7 @@ class FH_UltimateBot(ctk.CTk):
             "#D97706",
             self.config.get("sc_count", 30),
         )
-        # ====== 【新增】：移除车辆模式下拉选择 ======
+        # ======移除车辆模式下拉选择 ======
         self.opt_sell_mode = ctk.CTkOptionMenu(
             box_sc,
             values=["模式1: 识图移除模式", "模式2: 移除最近添加"],
@@ -833,7 +866,7 @@ class FH_UltimateBot(ctk.CTk):
         else:
             self.opt_sell_mode.set("模式2: 移除最近添加")
             
-        self.opt_sell_mode.pack(pady=4)
+        self.opt_sell_mode.pack(before=self.entry_sc, pady=(0, 6))
         # ==========================================
         self.next_frame4, self.entry_next4, self.chk4 = create_next_step(
         self.config_frame, self.var_chk4, self.config.get("next_4", 1)
@@ -861,6 +894,13 @@ class FH_UltimateBot(ctk.CTk):
         self.le_restart_cmd = ctk.CTkEntry(self.global_settings_frame, width=250, height=28)
         self.le_restart_cmd.insert(0, self.config.get("restart_cmd", "start steam://run/2483190"))
         self.le_restart_cmd.pack(side="left", padx=(0, 20))
+        # ====== 【新增】：添加自动关游戏和关机的复选框 ======
+        self.var_auto_close = ctk.BooleanVar(value=self.config.get("auto_close_game", False))
+        self.cb_auto_close = ctk.CTkCheckBox(self.global_settings_frame, text="任务完成关游戏", variable=self.var_auto_close)
+        self.cb_auto_close.pack(side="left", padx=(10, 15))
+        self.var_auto_shutdown = ctk.BooleanVar(value=self.config.get("auto_shutdown", False))
+        self.cb_auto_shutdown = ctk.CTkCheckBox(self.global_settings_frame, text="任务完成关机", variable=self.var_auto_shutdown)
+        self.cb_auto_shutdown.pack(side="left", padx=(5, 10))
         # ====== 【新增】：测试自动开机流程按钮 ======
         self.btn_test_boot = ctk.CTkButton(
             self.global_settings_frame, 
@@ -1366,6 +1406,7 @@ class FH_UltimateBot(ctk.CTk):
         self.global_loop_current = 0
 
         def runner():
+            task_finished_normally = False  #标记任务是否完美跑完
             if not self.check_and_focus_game():
                 self.stop_all()
                 return
@@ -1460,6 +1501,7 @@ class FH_UltimateBot(ctk.CTk):
                     
                     if self.global_loop_current > total_loops:
                         self.log("达到设定的总循环次数，任务圆满结束。")
+                        task_finished_normally = True
                         break
                         
                     self.log(f"开启新一轮大循环 ({self.global_loop_current}/{total_loops})")
@@ -1473,7 +1515,25 @@ class FH_UltimateBot(ctk.CTk):
                     self.sc_count = 0
                 
                 curr_idx = next_idx
-
+            # ====== 【新增】：执行自动退游与关机逻辑 ======
+            if task_finished_normally and self.is_running:
+                if self.var_auto_close.get():
+                    self.log("【任务圆满完成】已开启自动退游，30秒后强制关闭游戏...")
+                    for _ in range(30):
+                        if not self.is_running: break  # 如果在此期间用户点击了停止，打断倒计时
+                        time.sleep(1)
+                    if self.is_running:
+                        try:
+                            os.system('taskkill /F /IM forzahorizon6.exe /T')
+                            self.log("已强行杀死游戏进程。")
+                            time.sleep(2)
+                        except Exception as e:
+                            self.log(f"关闭游戏失败: {e}")
+                if self.var_auto_shutdown.get() and self.is_running:
+                    self.log("【任务圆满完成】触发自动关机！系统将在 3 分钟后关闭！")
+                    self.log("提示：如需取消关机，请按 Win+R 键，输入 shutdown -a 并回车。")
+                    os.system("shutdown -s -t 180")
+            # ==============================================
             self.stop_all()
 
         self.current_thread = threading.Thread(target=runner, daemon=True)
@@ -1922,12 +1982,14 @@ class FH_UltimateBot(ctk.CTk):
     def attempt_recovery(self):
         self.log("任务执行异常中断，准备执行断点恢复流程...")
         if not self.check_and_focus_game():
+            if not self.is_running: return False  # <--- 【新增防御】如果用户已停止，直接退出，不重启游戏
             # 游戏没开或者进程没了，直接走重启流程
             if not self.restart_game_and_boot():
                 return False
         else:
             # 进程还在，使用【高级状态机】尝试动态退回
             if not self.advanced_enter_menu():
+                if not self.is_running: return False  # <--- 【新增防御】如果用户已停止，直接退出，绝不杀游戏！
                 self.log("高级动态退回失败(可能游戏卡死或致命报错)，准备强杀进程并重启...")
                 try:
                     os.system('taskkill /F /IM forzahorizon6.exe /T')
@@ -2102,7 +2164,10 @@ class FH_UltimateBot(ctk.CTk):
 
     def get_template_meta(self):
         images_dir = self.get_images_root_dir()
-        meta_data = {}
+        # 【新增】：在缓存校验文件中强制写入当前软件版本号
+        meta_data = {
+            "__APP_VERSION__": CURRENT_VERSION
+        }
         if not images_dir:
             return meta_data
 
@@ -2153,6 +2218,10 @@ class FH_UltimateBot(ctk.CTk):
         scales = self.get_scales_to_try(fast_mode=False)
 
         for rel_path in meta_data.keys():
+            # 过滤掉版本号的 key，避免把它当成图片去读取
+            if rel_path == "__APP_VERSION__":
+                continue
+                
             img_path = os.path.join(images_dir, rel_path)
             tpl = cv2.imread(img_path, cv2.IMREAD_COLOR)
             if tpl is None:
@@ -2197,11 +2266,21 @@ class FH_UltimateBot(ctk.CTk):
     def prepare_template_cache(self):
         os.makedirs(CACHE_DIR, exist_ok=True)
 
+        # 如果版本一致且图片修改时间/大小一致，直接加载
         if self.is_template_cache_valid():
             if self.load_template_file_cache():
                 return
-
-        self.log("模板缓存不存在或已失效，开始后台重建（这可能需要几秒钟）...")
+        self.log("检测到软件版本更新或本地图片已修改，开始强制重建图像缓存(需几秒钟)...")
+        
+        # 【新增】：暴力物理删除旧文件，防止数据残留干扰
+        try:
+            if os.path.exists(TEMPLATE_CACHE_FILE):
+                os.remove(TEMPLATE_CACHE_FILE)
+            if os.path.exists(TEMPLATE_META_FILE):
+                os.remove(TEMPLATE_META_FILE)
+        except Exception as e:
+            self.log(f"清理旧缓存文件失败: {e}")
+        # 重新生成最新缓存
         if self.build_template_file_cache():
             self.template_cache.clear()
             self.scaled_template_cache.clear()
@@ -2505,6 +2584,7 @@ class FH_UltimateBot(ctk.CTk):
         except Exception as e:
             self.log(f"find_image_with_element_stable 识别报错: {e}")
             return None
+            '''
     def find_image_with_element_multi(self, main_path, sub_path, region=None, fast_mode=True,
         main_threshold=0.60, like_threshold=0.75, final_threshold=0.72, mask_areas=None):
         if not self.is_running:
@@ -2592,11 +2672,11 @@ class FH_UltimateBot(ctk.CTk):
 
                     # 综合计算总分
                     final_score = (
-                        color_score * 0.30 +
-                        gray_score * 0.20 +
-                        edge_score * 0.20 +
-                        center_score * 0.15 +
-                        like_score * 0.15
+                        color_score * 0.40 +
+                        gray_score * 0.25 +
+                        edge_score * 0.15 +
+                        center_score * 0.10 +
+                        like_score * 0.10
                     )
 
                     curr_pos = (
@@ -2618,6 +2698,161 @@ class FH_UltimateBot(ctk.CTk):
 
         except Exception as e:
             self.log(f"find_image_with_element_multi 异常: {e}")
+            return None
+            '''
+    def find_image_with_element_multi(self, main_path, sub_path, region=None, fast_mode=True,
+        main_threshold=0.60, like_threshold=0.75, final_threshold=0.72, mask_areas=None, ignore_top_text=False):
+            
+        if not self.is_running:
+            return None
+        try:
+            screen_bgr = self.capture_region(region, mask_areas=mask_areas)
+            screen_gray = self.to_gray_image(screen_bgr)
+            
+            # 预计算屏幕 HSV (用于底部颜色校验)
+            screen_hsv = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2HSV)
+            scales_to_try = self.get_scales_to_try(fast_mode=fast_mode)
+            for scale in scales_to_try:
+                main_tpl_c, _ = self.get_scaled_template(main_path, scale)
+                sub_tpl_c, _ = self.get_scaled_template(sub_path, scale)
+                if main_tpl_c is None or sub_tpl_c is None:
+                    continue
+                # ==============================
+                # 【预处理】模板只计算一次 (循环外)
+                # ==============================
+                h_m, w_m = main_tpl_c.shape[:2]
+                
+                # 区域划分
+                top_h = int(h_m * 0.20)   # 顶部文字
+                mid_h = int(h_m * 0.60)   # 中部车身
+                bot_h = h_m - top_h - mid_h  # 底部稀有度
+                
+                # 模板切片
+                tpl_top_gray = self.to_gray_image(main_tpl_c[0:top_h, :])
+                tpl_mid_bgr = main_tpl_c[top_h:top_h + mid_h, :]
+                tpl_mid_gray = self.to_gray_image(tpl_mid_bgr)
+                tpl_bot_bgr = main_tpl_c[top_h + mid_h:, :]
+                tpl_bot_hsv = cv2.cvtColor(tpl_bot_bgr, cv2.COLOR_BGR2HSV)
+                
+                # 计算模板底部平均颜色 (用于快速校验)
+                # 稀有度条通常在底部左侧，避开右侧的等级数字
+                bot_roi_tpl = tpl_bot_hsv[:, :int(w_m * 0.6)] 
+                tpl_bot_avg_color = cv2.mean(bot_roi_tpl)[:3]
+                if h_m < 5 or w_m < 5 or h_m > screen_bgr.shape[0] or w_m > screen_bgr.shape[1]:
+                    continue
+                # 1. 全图匹配
+                res_main = cv2.matchTemplate(screen_bgr, main_tpl_c, cv2.TM_CCOEFF_NORMED)
+                flat = res_main.ravel()
+                if flat.size == 0:
+                    continue
+                
+                # 2. 获取候选点
+                top_k = min(30, flat.size)
+                idxs = np.argpartition(flat, -top_k)[-top_k:]
+                points = []
+                for idx in idxs:
+                    y, x = np.unravel_index(idx, res_main.shape)
+                    score = res_main[y, x]
+                    if score < max(0.55, main_threshold - 0.12):
+                        continue
+                    points.append((x, y, score))
+                
+                # 3. 排序：从左到右
+                points.sort(key=lambda p: (p[0] // 50, p[1]))  # 先按 X 坐标分列 (每 50 像素一列)，再按 Y 排序
+                
+                checked_points = set()
+                for pt in points:
+                    x, y, base_score = pt
+                    # 去重
+                    key = (x // 10, y // 10)
+                    if key in checked_points:
+                        continue
+                    checked_points.add(key)
+                    # ==============================
+                    # 【快速失败 1】底部稀有度颜色校验 (最快)
+                    # 紫色 (史诗) vs 橙色 (传奇) 在 HSV 空间差异巨大
+                    # ==============================
+                    bot_y1, bot_y2 = y + top_h + mid_h, y + h_m
+                    bot_x1, bot_x2 = x, x + int(w_m * 0.6)  # 只取左侧稀有度条
+                    
+                    if bot_y2 <= screen_hsv.shape[0] and bot_x2 <= screen_hsv.shape[1]:
+                        screen_bot_hsv = screen_hsv[bot_y1:bot_y2, bot_x1:bot_x2]
+                        if screen_bot_hsv.size > 0:
+                            screen_bot_avg_color = cv2.mean(screen_bot_hsv)[:3]
+                            # 计算颜色距离 (H 通道差异最重要)
+                            color_dist = abs(screen_bot_avg_color[0] - tpl_bot_avg_color[0])
+                            # 橙色 H≈10-20, 紫色 H≈130-150, 差异>50 肯定不是同一稀有度
+                            if color_dist > 40:  
+                                continue  # 稀有度颜色不对，直接跳过
+                    else:
+                        continue
+                    # ==============================
+                    # 【快速失败 2】标签校验
+                    # ==============================
+                    pad = 5
+                    sub_roi = screen_bgr[
+                        max(0, y - pad):min(screen_bgr.shape[0], y + h_m + pad),
+                        max(0, x - pad):min(screen_bgr.shape[1], x + w_m + pad),
+                    ]
+                    like_score = self.match_template_score(sub_roi, sub_tpl_c)
+                    if like_score < like_threshold:
+                        continue
+                    # ==============================
+                    # 【核心校验】中部车身 (三模匹配)
+                    # ==============================
+                    roi_bgr = screen_bgr[y:y + h_m, x:x + w_m]
+                    if roi_bgr.shape[:2] != main_tpl_c.shape[:2]:
+                        continue
+                    
+                    mid_roi_bgr = roi_bgr[top_h:top_h + mid_h, :]
+                    # 彩色匹配 (涂装)
+                    mid_color_score = self.match_template_score(mid_roi_bgr, tpl_mid_bgr)
+                    # 灰度匹配 (轮廓)
+                    mid_roi_gray = screen_gray[y + top_h:y + top_h + mid_h, x:x + w_m]
+                    mid_gray_score = self.match_template_score(mid_roi_gray, tpl_mid_gray)
+                    
+                    # 车身综合分
+                    mid_score = mid_color_score * 0.6 + mid_gray_score * 0.4
+                    if mid_score < 0.65:  # 车身不像，直接跳过
+                        continue
+                    # ==============================
+                    # 【辅助校验】顶部文字 (灰度)
+                    # ==============================
+                    top_roi_gray = screen_gray[y:y + top_h, x:x + w_m]
+                    top_score = self.match_template_score(top_roi_gray, tpl_top_gray)
+                    if top_score < 0.50 and not ignore_top_text:
+                        continue
+                    # ==============================
+                    # 【辅助校验】底部稀有度条 (形状 + 弱颜色)
+                    # ==============================
+                    bot_roi_bgr = roi_bgr[top_h + mid_h:, :]
+                    bot_score = self.match_template_score(bot_roi_bgr, tpl_bot_bgr)
+                    if bot_score < 0.55:
+                        continue
+                    # ==============================
+                    # 综合评分
+                    # 权重：车身 (40%) + 底部 (25%) + 初始 (20%) + 顶部 (15%)
+                    # ==============================
+                    final_score = (
+                        mid_score * 0.40 +      # 车身最核心
+                        bot_score * 0.25 +      # 稀有度条形状
+                        base_score * 0.20 +     # 初始匹配
+                        top_score * 0.15        # 文字辅助
+                    )
+                    curr_pos = (
+                        x + w_m // 2 + (region[0] if region else 0),
+                        y + h_m // 2 + (region[1] if region else 0),
+                    )
+                    if final_score >= final_threshold:
+                        self.log(
+                            f"[MultiMatch-Pro] 锁定：{main_path} | "
+                            f"综合：{final_score:.3f} | 车身：{mid_score:.3f} | "
+                            f"底部：{bot_score:.3f} | 颜色距：{color_dist:.1f}"
+                        )
+                        return curr_pos
+            return None
+        except Exception as e:
+            self.log(f"find_image_with_element_multi 异常：{e}")
             return None
     
     def find_image_with_element_fast(self, main_path, sub_path, region=None, threshold=0.70, sub_threshold=0.70):
@@ -2686,26 +2921,20 @@ class FH_UltimateBot(ctk.CTk):
 
     def wait_for_image_with_element_multi(self, main_path, sub_path, region=None, fast_mode=True,
         main_threshold=0.60, like_threshold=0.75,
-        final_threshold=0.72, timeout=30, interval=0.4):
+        final_threshold=0.72, timeout=30, interval=0.4, ignore_top_text=False):
         start = time.time()
-
-        while self.is_running and time.time() - start < timeout:
-            pos = self.find_image_with_element_multi(
-                main_path=main_path,
-                sub_path=sub_path,
-                region=region,
-                fast_mode=fast_mode,
-                main_threshold=main_threshold,
-                like_threshold=like_threshold,
-                final_threshold=final_threshold
-            )
-            if pos:
-                return pos
-
+        while self.is_running:
+            if getattr(self, "is_paused", False):
+                self.check_pause()
+                start = time.time()
+            if time.time() - start >= timeout:
+                break
+                
+            pos = self.find_image_with_element_multi(main_path=main_path, sub_path=sub_path, region=region, fast_mode=fast_mode, main_threshold=main_threshold, like_threshold=like_threshold, final_threshold=final_threshold,ignore_top_text=ignore_top_text)
+            if pos: return pos
             sleep_end = time.time() + interval
             while self.is_running and time.time() < sleep_end:
                 time.sleep(0.05)
-
         return None
 
     def load_template_transparent(self, template_path):
@@ -2765,11 +2994,19 @@ class FH_UltimateBot(ctk.CTk):
     def wait_for_image_transparent(self, template_path, region=None, threshold=0.70, timeout=30, interval=0.4, fast_mode=True):
         """等待带有透明背景的图片"""
         start = time.time()
-        while self.is_running and time.time() - start < timeout:
+        while self.is_running:
+            if getattr(self, "is_paused", False):
+                self.check_pause()
+                start = time.time()
+            if time.time() - start >= timeout:
+                break
+                
             pos = self.find_image_transparent(template_path, region, threshold, fast_mode)
-            if pos:
-                return pos
-            time.sleep(interval)
+            if pos: return pos
+            
+            sleep_end = time.time() + interval
+            while self.is_running and time.time() < sleep_end:
+                time.sleep(0.05)
         return None
     def wait_for_image_with_element_stable(
         self,
@@ -2860,7 +3097,7 @@ class FH_UltimateBot(ctk.CTk):
                 
                 points = list(zip(*loc[::-1]))
                 # 强制按 X 坐标（从左到右）优先排序，无视上下排
-                points.sort(key=lambda p: (p[1] // 50, p[0]))
+                points.sort(key=lambda p: (p[0] // 50, p[1]))  # 先按 X 坐标分列 (每 50 像素一列)，再按 Y 排序
                 
                 checked = set()
                 for pt in points:
@@ -2935,10 +3172,19 @@ class FH_UltimateBot(ctk.CTk):
             return None
     def wait_for_image_ultimate_safe(self, main_path, anti_path, region=None, main_threshold=0.80, anti_threshold=0.65, timeout=3, interval=0.2, mask_areas=None):
         start = time.time()
-        while self.is_running and time.time() - start < timeout:
+        while self.is_running:
+            if getattr(self, "is_paused", False):
+                self.check_pause()
+                start = time.time()
+            if time.time() - start >= timeout:
+                break
+                
             pos = self.find_image_ultimate_safe(main_path, anti_path, region, main_threshold, anti_threshold, mask_areas=mask_areas)
             if pos: return pos
-            time.sleep(interval)
+            
+            sleep_end = time.time() + interval
+            while self.is_running and time.time() < sleep_end:
+                time.sleep(0.05)
         return None
     def find_image_smart(self, template_path, primary_region=None, fallback_region=None, threshold=0.75, fast_mode=True):
         if primary_region:
@@ -3115,18 +3361,16 @@ class FH_UltimateBot(ctk.CTk):
                 - 超时未找到返回 None
         """
         start = time.time()
-        while self.is_running and time.time() - start < timeout:
-            pos = self.find_any_image_gray(
-                image_list,
-                region=region,
-                threshold=threshold,
-                fast_mode=fast_mode,
-                invert_mode=invert_mode   # 【新增】
-            )
-            if pos:
-                return pos
+        while self.is_running:
+            if getattr(self, "is_paused", False):
+                self.check_pause()
+                start = time.time()
+            if time.time() - start >= timeout:
+                break
+                
+            pos = self.find_any_image_gray(image_list, region=region, threshold=threshold, fast_mode=fast_mode, invert_mode=invert_mode)
+            if pos: return pos
             
-            # 安全等待机制，防止卡死
             sleep_end = time.time() + interval
             while self.is_running and time.time() < sleep_end:
                 time.sleep(0.05)
@@ -3148,18 +3392,16 @@ class FH_UltimateBot(ctk.CTk):
                 - 超时未找到返回 None
         """
         start = time.time()
-        while self.is_running and time.time() - start < timeout:
-            pos = self.find_image_gray(
-                template_path,
-                region=region,
-                threshold=threshold,
-                fast_mode=fast_mode,
-                invert_mode=invert_mode   # 【新增】
-            )
-            if pos:
-                return pos
+        while self.is_running:
+            if getattr(self, "is_paused", False):
+                self.check_pause()
+                start = time.time()
+            if time.time() - start >= timeout:
+                break
+                
+            pos = self.find_image_gray(template_path, region=region, threshold=threshold, fast_mode=fast_mode, invert_mode=invert_mode)
+            if pos: return pos
             
-            # 安全等待机制
             sleep_end = time.time() + interval
             while self.is_running and time.time() < sleep_end:
                 time.sleep(0.05)
@@ -3215,10 +3457,15 @@ class FH_UltimateBot(ctk.CTk):
     def wait_for_any_image_transparent(self, image_list, region=None, threshold=0.70, timeout=30, interval=0.4, fast_mode=True):
         """等待带有透明背景的多张图片中的任意一张出现"""
         start = time.time()
-        while self.is_running and time.time() - start < timeout:
+        while self.is_running:
+            if getattr(self, "is_paused", False):
+                self.check_pause()
+                start = time.time()
+            if time.time() - start >= timeout:
+                break
+                
             pos = self.find_any_image_transparent(image_list, region, threshold, fast_mode)
-            if pos:
-                return pos
+            if pos: return pos
             
             sleep_end = time.time() + interval
             while self.is_running and time.time() < sleep_end:
@@ -3227,29 +3474,26 @@ class FH_UltimateBot(ctk.CTk):
     def wait_for_any_image(self, image_list, region=None, threshold=0.75, timeout=30, interval=0.4, fast_mode=True, log_text=None):
         start = time.time()
 
-        while self.is_running and time.time() - start < timeout:
+        while self.is_running:
+            # 【新增：暂停期间冻结时间】
+            if getattr(self, "is_paused", False):
+                self.check_pause()
+                start = time.time() # 恢复后重置倒计时
+            if time.time() - start >= timeout:
+                break
+                
             try:
                 screen_bgr = self.capture_region(region)
                 for img_path in image_list:
-                    pos = self.find_image_in_screen(
-                        screen_bgr,
-                        img_path,
-                        region=region,
-                        threshold=threshold,
-                        fast_mode=fast_mode
-                    )
-                    if pos:
-                        return pos
+                    pos = self.find_image_in_screen(screen_bgr, img_path, region=region, threshold=threshold, fast_mode=fast_mode)
+                    if pos: return pos
             except Exception as e:
                 self.log(f"wait_for_any_image 异常: {e}")
-
-            if log_text:
-                self.log(log_text)
-
+            if log_text: self.log(log_text)
+            
             sleep_end = time.time() + interval
             while self.is_running and time.time() < sleep_end:
                 time.sleep(0.05)
-
         return None
 
     def wait_for_image(self, template_path, region=None, threshold=0.75, timeout=30, interval=0.4, fast_mode=True, log_text=None):
@@ -3401,10 +3645,15 @@ class FH_UltimateBot(ctk.CTk):
     # --- 模块：跑图前置与循环跑图 ---
     # ==========================================
     def logic_race(self, target_count):
+        # ====== 【新增】：任务内锁定，每次进入任务强制重置详情状态锁 ======
+        self.detail_state_confirmed = False
         if self.race_counter >= target_count:
             return True
 
         self.update_running_ui("循环跑图", self.race_counter, target_count)
+
+        IMG_SKILL_CAR = "skillcar.png"      # 技能车主图
+        IMG_LIKE_TAG = "liketag.png"
 
         self.log("准备验证/进入菜单...")
         if not self.enter_menu():
@@ -3490,24 +3739,47 @@ class FH_UltimateBot(ctk.CTk):
         time.sleep(2.0)
 
         pos_target = self.wait_for_image_with_element_multi(
-            "skillcar.png",
-            "liketag.png",
+            IMG_SKILL_CAR,
+            IMG_LIKE_TAG,
             region=self.regions["全界面"],
             fast_mode=True,
-            main_threshold=0.75,
+            main_threshold=0.7,
             like_threshold=0.7,
             final_threshold=0.7,
-            timeout=2,
-            interval=0.25
+            timeout=1.2,
+            interval=0.2,
+            ignore_top_text=True
         )
-
+        if pos_target:
+            self.detail_state_confirmed = True
+        
+        # 如果没找到，且之前从未确认过状态，则按下 P 键再找一次
+        if not pos_target and not self.detail_state_confirmed:
+            self.log("当前页面未找到车辆，尝试按 P 切换详情状态...")
+            self.hw_press("p")
+            time.sleep(0.6)
+            
+            pos_target = self.wait_for_image_with_element_multi(
+                IMG_SKILL_CAR,
+                IMG_LIKE_TAG,
+                region=self.regions["全界面"],
+                main_threshold=0.7,
+                like_threshold=0.7,
+                final_threshold=0.7,
+                timeout=1.2,
+                interval=0.2,
+                fast_mode=True,
+                ignore_top_text=True 
+            )
+            if pos_target:
+                self.detail_state_confirmed = True
         if not pos_target:
             self.log("未找到带 liketag 的目标车辆，重新选品牌...")
             self.hw_press("backspace")
             time.sleep(1.2)
 
             found_brand = False
-            for _ in range(3):
+            for _ in range(5):
                 if not self.is_running:
                     return False
 
@@ -3522,7 +3794,7 @@ class FH_UltimateBot(ctk.CTk):
                 time.sleep(0.4)
 
             if not found_brand:
-                self.log("三次尝试未找到刷图车辆品牌。")
+                self.log("5次尝试未找到刷图车辆品牌。")
                 return False
 
             for _ in range(20):
@@ -3530,26 +3802,49 @@ class FH_UltimateBot(ctk.CTk):
                     return False
 
                 pos_target = self.wait_for_image_with_element_multi(
-                    "skillcar.png",
-                    "liketag.png",
+                    IMG_SKILL_CAR,
+                    IMG_LIKE_TAG,
                     region=self.regions["全界面"],
                     main_threshold=0.75,
                     like_threshold=0.7,
                     final_threshold=0.7,
-                    timeout=2,
-                    interval=0.25,
+                    timeout=1.2,
+                    interval=0.2,
                     fast_mode=True
                 )
+                
+                # 如果找到了，永久锁定详情状态为正确
+                if pos_target:
+                    self.detail_state_confirmed = True
+                
+                # 如果没找到，且之前从未确认过状态，则按下 P 键再找一次
+                if not pos_target and not self.detail_state_confirmed:
+                    self.log("当前页面未找到车辆，尝试按 P 切换详情状态...")
+                    self.hw_press("p")
+                    time.sleep(0.6)
+                    
+                    pos_target = self.wait_for_image_with_element_multi(
+                        IMG_SKILL_CAR,
+                        IMG_LIKE_TAG,
+                        region=self.regions["全界面"],
+                        main_threshold=0.75,
+                        like_threshold=0.7,
+                        final_threshold=0.7,
+                        timeout=1.2,
+                        interval=0.2,
+                        fast_mode=True
+                    )
+                    if pos_target:
+                        self.detail_state_confirmed = True
                 if pos_target:
                     break
-
                 for _ in range(4):
                     self.hw_press("right", delay=0.08)
                     time.sleep(0.08)
                 time.sleep(0.4)
 
         if not pos_target:
-            self.log("翻页未能找到带有 liketag 的刷图车辆！")
+            self.log("翻页未能找到带有收藏的刷图车辆！")
             return False
 
         self.game_click(pos_target)
@@ -3634,10 +3929,10 @@ class FH_UltimateBot(ctk.CTk):
                 if now - last_like_chk >= 3.0:
                     vram_result = self.check_vramne_during_race()
                     if vram_result is True:
-                        self.log("VRAM恢复完成，结束当前跑图流程，交给外层重新恢复。")
+                        self.log("VRAM已满，结束当前跑图流程，交给外层重新恢复。")
                         return False
                     elif vram_result is False:
-                        self.log("VRAM恢复失败。")
+                        #self.log("VRAM")
                         return False
                     pos_like = self.find_any_image_gray(
                         ["likeauthor.png", "dislikeauthor.png"],
@@ -3675,13 +3970,13 @@ class FH_UltimateBot(ctk.CTk):
                 # 寻找并点击 restarta.png
                 pos_restarta = self.wait_for_image_gray("restarta.png", region=self.regions["全界面"], threshold=0.70, timeout=4.0, interval=0.3, fast_mode=True)
                 if pos_restarta:
-                    self.log("找到 restarta.png，点击重开赛事...")
+                    self.log("找到重新开始，点击重开赛事...")
                     self.game_click(pos_restarta)
                     time.sleep(1.0)
                     self.hw_press("enter")  # 地平线重开赛事通常有确认弹窗，按一次回车确认
                     time.sleep(4.0)         # 等待黑屏重加载动画
                 else:
-                    self.log("未找到 restarta.png，尝试直接继续...")
+                    self.log("未找到重新开始，尝试直接继续...")
                     
                 # 【关键】：直接跳过下方的结算流程，回到最外层 while 重新找 start.png（并且本次不计入 race_counter）
                 continue
@@ -3801,7 +4096,7 @@ class FH_UltimateBot(ctk.CTk):
             threshold=0.90,
             timeout=8,
             interval=0.3,
-            fast_mode=False
+            fast_mode=True
         )
         if not pos_22b:
             self.log("未找到消耗品车辆")
@@ -3843,6 +4138,8 @@ class FH_UltimateBot(ctk.CTk):
     # --- 模块：抽奖 ---
     # ==========================================
     def logic_super_wheelspin(self, target_count):
+        # ====== 任务内锁定，每次进入任务强制重置详情状态锁 ======
+        self.detail_state_confirmed = False
         if self.cj_counter >= target_count:
             return True
 
@@ -3897,9 +4194,35 @@ class FH_UltimateBot(ctk.CTk):
         while self.cj_counter < target_count:
             if not self.is_running:
                 return False
-            self.log("进入我的车辆.")
-            self.hw_press("enter")
-            time.sleep(2.0)
+            # ======根据下拉框判断进入方式 ======
+            cj_mode_str = "模式1"
+            if hasattr(self, "opt_cj_mode"):
+                cj_mode_str = self.opt_cj_mode.get()
+                
+            if "模式1" in cj_mode_str:
+                self.log("进入我的车辆.")
+                self.hw_press("enter")
+                time.sleep(2.0)
+            else:
+                self.log("进入设计与喷涂.")
+                # 寻找并点击设计与喷涂
+                pos_dp = self.wait_for_image_gray("DandP.png", region=self.regions["全界面"], threshold=0.70, timeout=8, interval=0.3, fast_mode=True)
+                if pos_dp:
+                    self.game_click(pos_dp)
+                    time.sleep(1.5)
+                else:
+                    self.log("未找到设计与喷涂(DandP.png)")
+                    return False
+                
+                # 寻找并点击选择车辆
+                pos_choose = self.wait_for_image_gray("choosecar.png", region=self.regions["全界面"], threshold=0.70, timeout=8, interval=0.3, fast_mode=True)
+                if pos_choose:
+                    self.game_click(pos_choose)
+                    time.sleep(2.0)
+                else:
+                    self.log("未找到选择车辆(choosecar.png)")
+                    return False
+            # ===============================================
             self.hw_press("backspace")
             time.sleep(1.0)
 
@@ -3931,7 +4254,7 @@ class FH_UltimateBot(ctk.CTk):
             jump_pages = max(0, self.memory_car_page - 1)
             
             if jump_pages > 0:
-                self.log(f"智能记忆触发：快速跳过前 {jump_pages} 页...")
+                self.log(f"快速跳过前 {jump_pages} 页...")
                 for _ in range(jump_pages):
                     if not self.is_running: return False
                     for _ in range(4):
@@ -3953,10 +4276,31 @@ class FH_UltimateBot(ctk.CTk):
                     main_threshold=0.70,   # 防HDR核心：第一道门槛放低
                     like_threshold=0.70,
                     final_threshold=0.70,
-                    timeout=1.5,
+                    timeout=1.0,
                     interval=0.2,
                     fast_mode=True
                 )
+                
+                if pos_target:
+                    self.detail_state_confirmed = True
+                    
+                if not pos_target and not self.detail_state_confirmed:
+                    self.log("未找到目标车辆，尝试按 P 切换详情状态...")
+                    self.hw_press("p")
+                    time.sleep(0.6)
+                    pos_target = self.wait_for_image_with_element_multi(
+                        "newCC.png",
+                        "newcartag.png",
+                        region=self.regions["全界面"],
+                        main_threshold=0.70,
+                        like_threshold=0.70,
+                        final_threshold=0.70,
+                        timeout=1.0,
+                        interval=0.2,
+                        fast_mode=True
+                    )
+                    if pos_target:
+                        self.detail_state_confirmed = True
                 
                 if pos_target:
                     self.game_click(pos_target)
@@ -3976,22 +4320,32 @@ class FH_UltimateBot(ctk.CTk):
                 self.log("列表中未找到目标车辆，重置记忆页码。")
                 self.memory_car_page = 0 # 没找到说明车刷完了，清零记忆
                 return False
-            time.sleep(1.2)
-            self.log("尝试寻找'上车'按钮...")
-
-            pos_rc = None
-            pos_rc = self.wait_for_image_gray("rc.png", region=self.regions["全界面"], threshold=0.70, timeout=0.5, interval=0.1, fast_mode=True)
             
-            if pos_rc:
-                self.log("点击上车")
-                self.game_click(pos_rc)
-                time.sleep(2.0)  # 点击后等待上车加载
+            if "模式 1" in cj_mode_str:
+                # ===== 模式 1: 原逻辑 - 找 rc.png 按钮，找不到按回车 =====
+                time.sleep(0.5)
+                self.log("尝试寻找'上车'按钮...")
+
+                pos_rc = None
+                pos_rc = self.wait_for_image_gray("rc.png", region=self.regions["全界面"], threshold=0.70, timeout=0.5, interval=0.1, fast_mode=True)
+                
+                if pos_rc:
+                    self.log("点击上车")
+                    self.game_click(pos_rc)
+                    time.sleep(2.0)  # 点击后等待上车加载
+                else:
+                    self.log("回车上车")
+                    self.hw_press("enter")
+                    time.sleep(1.0)
+                    self.hw_press("enter")
+                    time.sleep(1.0)
             else:
-                self.log("回车上车")
+                # ===== 模式 2: 快速处理 - 等待 0.5 秒后按 1 次回车 =====
+                time.sleep(0.5)
                 self.hw_press("enter")
                 time.sleep(1.0)
-                self.hw_press("enter")
-                time.sleep(1.0)
+
+            
 
 
             pos_sjy = None
@@ -4217,6 +4571,8 @@ class FH_UltimateBot(ctk.CTk):
         return True
     
     def find_and_remove_consumable_car(self, target_count):
+        # ====== 【新增】：任务内锁定，每次进入任务强制重置详情状态锁 ======
+        self.detail_state_confirmed = False
         if self.sc_count >= target_count:
             return True
         
@@ -4266,7 +4622,7 @@ class FH_UltimateBot(ctk.CTk):
         self.move_to_game_coord(5, 5)
         time.sleep(0.2)
 
-        pos = self.wait_for_image("rc.png", region=self.regions["全界面"], threshold=0.65, timeout=5, interval=0.2, fast_mode=True)
+        pos = self.wait_for_image("rc.png", region=self.regions["全界面"], threshold=0.65, timeout=2, interval=0.2, fast_mode=True)
         if pos:
             self.log("找到上车，执行点击")
             self.game_click(pos) 
@@ -4283,7 +4639,7 @@ class FH_UltimateBot(ctk.CTk):
             if not self.is_running:
                 return False
 
-            pos = self.wait_for_any_image(["buyandsell-b.png", "buyandsell-w.png"], region=self.regions["上"], threshold=0.70, timeout=0.8, interval=0.2, fast_mode=True)
+            pos = self.wait_for_any_image(["buyandsell-b.png", "buyandsell-w.png"], region=self.regions["上"], threshold=0.70, timeout=1.5, interval=0.2, fast_mode=True)
             if pos:
                 self.log(f"第 {i + 1} 次检测到购买与出售，进入车辆界面")
                 self.hw_press("enter")  #进入我的车辆
@@ -4348,13 +4704,13 @@ class FH_UltimateBot(ctk.CTk):
         self.game_click(brand_pos)
         time.sleep(0.8)
         
-        self.log("开始删除最近获得的车辆！！！请人工确认是否移除")
+        self.log("开始删除消耗品车辆！！！请人工确认是否移除")
         
         not_found_pages = 0  
         while self.sc_count < target_count:
             if not self.is_running:
                 return False
-            self.log(f"正在使用 3模式 严格扫描当前页面... (连续未找到: {not_found_pages}/5)")
+            self.log(f"正在严格扫描当前页面... (连续未找到: {not_found_pages}/5)")
             
             # 【使用终极安全锁】：2张图，4道防线，绝不乱删
             pos_target = self.wait_for_image_ultimate_safe(
@@ -4363,9 +4719,29 @@ class FH_UltimateBot(ctk.CTk):
                 region=self.regions["全界面"],
                 main_threshold=0.77,              # 极高的基础相似度要求
                 anti_threshold=0.65,              # 极度敏感的 NEW 标签排斥
-                timeout=3.0,
+                timeout=1.0,
                 interval=0.2
             )
+            
+            if pos_target:
+                self.detail_state_confirmed = True
+                
+            if not pos_target and not self.detail_state_confirmed:
+                self.log("未找到目标车辆，尝试按 P 切换详情状态...")
+                self.hw_press("p")
+                time.sleep(0.6)
+                
+                pos_target = self.wait_for_image_ultimate_safe(
+                    main_path="removecarobject.png",
+                    anti_path="newcartag.png",
+                    region=self.regions["全界面"],
+                    main_threshold=0.77,
+                    anti_threshold=0.65,
+                    timeout=1.0,
+                    interval=0.2
+                )
+                if pos_target:
+                    self.detail_state_confirmed = True
             
             if not pos_target:
                 not_found_pages += 1
@@ -4383,15 +4759,15 @@ class FH_UltimateBot(ctk.CTk):
             # ====== 找到了目标车辆，重置翻页计数器 ======
             not_found_pages = 0
             
-            self.log("精准锁定目标车辆，执行点击...")
+            self.log("锁定目标车辆，执行点击...")
             self.game_click(pos_target)
-            time.sleep(1.2) # 等待点击后的反应
+            time.sleep(0.8) # 等待点击后的反应
             
             # ==========================================
             # 核心逻辑：寻找 removecar.png (从车库移除)
             # ==========================================
             self.log("寻找 '从车库移除' 按钮...")
-            pos_remove = self.find_image_gray("removecar.png", region=self.regions["全界面"], threshold=0.75, fast_mode=True)
+            pos_remove = self.wait_for_image_gray("removecar.png", region=self.regions["中间"], threshold=0.70, timeout=1.5, interval=0.3, fast_mode=True)
             
             if pos_remove:
                 self.log("直接找到移除按钮，点击...")
@@ -4402,7 +4778,7 @@ class FH_UltimateBot(ctk.CTk):
                 time.sleep(0.8) # 等待菜单弹出动画
                 
                 # 再次寻找
-                pos_remove = self.find_image_gray("removecar.png", region=self.regions["全界面"], threshold=0.75, fast_mode=True)
+                pos_remove = self.wait_for_image_gray("removecar.png", region=self.regions["中间"], threshold=0.75, timeout=1.5, interval=0.3, fast_mode=True)
                 if pos_remove:
                     self.log("呼出菜单后找到移除按钮，点击...")
                     self.game_click(pos_remove)
