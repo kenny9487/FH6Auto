@@ -89,11 +89,11 @@ LOG_FILE = os.path.join(APP_DIR, "bot_log.txt")
 CACHE_DIR = os.path.join(APP_DIR, "cache")
 TEMPLATE_CACHE_FILE = os.path.join(CACHE_DIR, "template_cache.pkl")
 TEMPLATE_META_FILE = os.path.join(CACHE_DIR, "template_meta.json")
-DEFAULT_CURRENT_VERSION = "2.0"
+DEFAULT_CURRENT_VERSION = "1.0"
 APP_DISPLAY_NAME = "FH6Auto Fork"
-APP_ATTRIBUTION = "Based on YOUSTHEONE&As7tesia&CaiSF25/FH6Auto"
+APP_ATTRIBUTION = "Based on YOUSTHEONE & As7tesia & CaiSF25 /FH6Auto"
 DEFAULT_UPSTREAM_REPO_URL = "https://github.com/YOUSTHEONE/FH6Auto"
-DEFAULT_PROJECT_REPO_URL = "https://github.com/CaiSF25/FH6Auto-Fork"
+DEFAULT_PROJECT_REPO_URL = "https://github.com/kenny9487/FH6Auto"
 DEFAULT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/CaiSF25/FH6Auto-Fork/refs/heads/main/version.json"
 
 def load_local_version_meta():
@@ -355,7 +355,7 @@ class FH_UltimateBot(ctk.CTk):
     def __init__(self):
         super().__init__()
         #窗口相關
-        self.title(f"FH6Auto by kenny9487 v{CURRENT_VERSION}")
+        self.title(f"FH6Auto by YSTO | kenny9487 繁體優化版 v{CURRENT_VERSION}")
         self.geometry("1800x800")
         #self.minsize(980, 560)
         self.attributes("-topmost", False)
@@ -1125,8 +1125,8 @@ class FH_UltimateBot(ctk.CTk):
             return
 
         self.support_win = ctk.CTkToplevel(self)
-        self.support_win.title("关于此版本")
-        self.support_win.geometry("380x420")
+        self.support_win.title("關於此版本")
+        self.support_win.geometry("380x460") # 稍微拉高視窗以容納兩排按鈕
         self.support_win.attributes("-topmost", True)
         self.support_win.resizable(False, False)
 
@@ -1139,136 +1139,45 @@ class FH_UltimateBot(ctk.CTk):
 
         self.support_win.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() - 380) // 2
-        y = self.winfo_y() + (self.winfo_height() - 420) // 2
+        y = self.winfo_y() + (self.winfo_height() - 460) // 2
         self.support_win.geometry(f"+{x}+{y}")
 
         ctk.CTkLabel(
             self.support_win,
             text=APP_DISPLAY_NAME,
-            font=ctk.CTkFont(weight="bold", size=18),
+            font=ctk.CTkFont(family="微軟正黑體", weight="bold", size=18),
             text_color="#F97316",
         ).pack(pady=(20, 6))
 
         ctk.CTkLabel(
             self.support_win,
             text=f"v{CURRENT_VERSION}",
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(family="微軟正黑體", size=13, weight="bold"),
         ).pack(pady=4)
 
         ctk.CTkLabel(
             self.support_win,
             text=APP_ATTRIBUTION,
             text_color="#A0A0A0",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(family="微軟正黑體", size=12),
         ).pack(pady=(2, 10))
 
         about_box = ctk.CTkTextbox(self.support_win, height=120, width=320, corner_radius=10)
         about_box.pack(padx=20, pady=8, fill="x")
-        about_box.insert("end", "这是一个基于上游项目修改的 fork 版本。\n\n")
-        about_box.insert("end", "当前界面标题、流程逻辑和模板替换功能已按本地修改版本调整。\n")
-        about_box.insert("end", "发布到你自己的 GitHub 时，建议同时保留对上游项目的引用说明。")
+        about_box.insert("end", "這是一個基於上游項目修改的 fork 版本。\n\n")
+        about_box.insert("end", "當前介面標題、流程邏輯和範本替換功能已按本地修改版本調整。\n")
+        about_box.insert("end", "發佈到你自己的 GitHub 時，建議同時保留對上游專案的引用說明。")
         about_box.configure(state="disabled")
 
         ctk.CTkFrame(self.support_win, height=2, fg_color="#333333").pack(fill="x", padx=20, pady=10)
 
         self.lbl_version = ctk.CTkLabel(
             self.support_win,
-            text=f"当前版本: v{CURRENT_VERSION}",
+            text=f"當前版本: v{CURRENT_VERSION}",
             text_color="gray",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(family="微軟正黑體", size=12),
         )
         self.lbl_version.pack()
-
-        def check_update_logic():
-            self.ui_call(self.lbl_version.configure, text="正在连接 Github...", text_color="#3498DB")
-            try:
-                remote_ver = "0.0.0"
-                remote_url = ""
-
-                # Prefer the lightweight manifest, but fall back to GitHub's
-                # latest release API so a forgotten version.json update does
-                # not silently hide a newer release.
-                manifest_url = UPDATE_MANIFEST_URL
-                resp = requests.get(manifest_url, timeout=5)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    remote_ver = str(data.get("version", "0.0.0"))
-                    remote_url = str(data.get("url", ""))
-
-                release_api_url = build_latest_release_api_url(PROJECT_REPO_URL)
-                if release_api_url:
-                    api_resp = requests.get(
-                        release_api_url,
-                        timeout=5,
-                        headers={"Accept": "application/vnd.github+json"},
-                    )
-                    if api_resp.status_code == 200:
-                        release_data = api_resp.json()
-                        api_ver = str(release_data.get("tag_name", "")).strip()
-                        api_url = str(release_data.get("html_url", "")).strip()
-                        if parse_version(api_ver) > parse_version(remote_ver):
-                            remote_ver = api_ver
-                            remote_url = api_url
-
-                if parse_version(remote_ver) > parse_version(CURRENT_VERSION):
-                    if remote_url.startswith("https://github.com/"):
-                        self.ui_call(
-                            self.lbl_version.configure,
-                            text=f"发现新版本 v{remote_ver}，已打开浏览器！",
-                            text_color="#2EA043",
-                        )
-                        webbrowser.open(remote_url)
-                    else:
-                        self.ui_call(
-                            self.lbl_version.configure,
-                            text="发现更新，但链接不可信，已拦截",
-                            text_color="#DA3633",
-                        )
-                else:
-                    self.ui_call(
-                        self.lbl_version.configure,
-                        text=f"当前已是最新版本 (v{CURRENT_VERSION})",
-                        text_color="gray",
-                    )
-            except Exception:
-                self.ui_call(
-                    self.lbl_version.configure,
-                    text="检查更新失败 (网络超时或无法访问)",
-                    text_color="#DA3633",
-                )
-
-        btn_frame = ctk.CTkFrame(self.support_win, fg_color="transparent")
-        btn_frame.pack(pady=6)
-
-        ctk.CTkButton(
-            btn_frame,
-            text="检查更新",
-            width=100,
-            height=30,
-            fg_color="#444444",
-            hover_color="#555555",
-            command=lambda: threading.Thread(target=check_update_logic, daemon=True).start(),
-        ).pack(side="left", padx=5)
-
-        ctk.CTkButton(
-            btn_frame,
-            text="当前项目",
-            width=100,
-            height=30,
-            fg_color="#2EA043",
-            hover_color="#238636",
-            command=lambda: webbrowser.open(PROJECT_REPO_URL),
-        ).pack(side="left", padx=5)
-
-        ctk.CTkButton(
-            btn_frame,
-            text="上游项目",
-            width=100,
-            height=30,
-            fg_color="#2563EB",
-            hover_color="#1D4ED8",
-            command=lambda: webbrowser.open(UPSTREAM_REPO_URL),
-        ).pack(side="left", padx=5)
 
         def check_update_logic():
             self.ui_call(self.lbl_version.configure, text="正在連接 Github...", text_color="#3498DB")
@@ -1313,6 +1222,7 @@ class FH_UltimateBot(ctk.CTk):
                     text_color="#DA3633",
                 )
 
+        # ====== 上排按鈕框架（2個按鈕） ======
         btn_frame = ctk.CTkFrame(self.support_win, fg_color="transparent")
         btn_frame.pack(pady=6)
 
@@ -1328,13 +1238,48 @@ class FH_UltimateBot(ctk.CTk):
 
         ctk.CTkButton(
             btn_frame,
-            text="GitHub",
+            text="當前項目",
             width=100,
             height=30,
             fg_color="#2EA043",
             hover_color="#238636",
+            command=lambda: webbrowser.open(PROJECT_REPO_URL),
+        ).pack(side="left", padx=5)
+
+        # ====== 下排按鈕框架（3個按鈕） ======
+        btn_frame2 = ctk.CTkFrame(self.support_win, fg_color="transparent")
+        btn_frame2.pack(pady=6)
+
+        ctk.CTkButton(
+            btn_frame2,
+            text="YOUSTHEONE",
+            width=100,
+            height=30,
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
             command=lambda: webbrowser.open("https://github.com/YOUSTHEONE/FH6Auto"),
         ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame2,
+            text="As7tesia",
+            width=100,
+            height=30,
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
+            command=lambda: webbrowser.open("https://github.com/As7tesia/FH6Auto"),
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame2,
+            text="CaiSF25",
+            width=100,
+            height=30,
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
+            command=lambda: webbrowser.open("https://github.com/CaiSF25/FH6Auto-Fork"),
+        ).pack(side="left", padx=5)
+
     def update_timer(self):
         if not self.is_running:
             return
@@ -1358,6 +1303,8 @@ class FH_UltimateBot(ctk.CTk):
                 self.ui_call(self.lbl_mini_prog.configure, text=f"執行進度: {current_val} / {max_val}")
         except Exception:
             pass
+
+
 
     # ==========================================
     # --- 核心操作與流程控制 ---
@@ -4394,7 +4341,7 @@ class FH_UltimateBot(ctk.CTk):
                     return False
 
                 brand_pos = self.wait_for_any_image_gray(
-                    ["CCbrand.png"],
+                    ["CCCbrand.png"],
                     region=self.regions["全介面"],
                     threshold=0.75,
                     timeout=0.8,
@@ -4846,7 +4793,7 @@ class FH_UltimateBot(ctk.CTk):
                 
 
             brand_pos = self.wait_for_any_image_gray(
-                ["CCbrand.png"],
+                ["CCCbrand.png"],
                 region=self.regions["全介面"],
                 threshold=0.75,
                 timeout=0.8,

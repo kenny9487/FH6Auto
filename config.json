@@ -1,9 +1,9 @@
 {
-    "race_count": 99,
-    "buy_count": 30,
-    "cj_count": 30,
-    "sc_count": 30,
-    "chk_1": true,
+    "race_count": 6,
+    "buy_count": 5,
+    "cj_count": 5,
+    "sc_count": 5,
+    "chk_1": false,
     "chk_2": true,
     "chk_3": true,
     "chk_4": true,
@@ -27,5 +27,9 @@
     "sell_mode": 1,
     "cj_mode": 2,
     "auto_close_game": false,
-    "auto_shutdown": false
+    "auto_shutdown": false,
+    "race_timeout": 180,
+    "calc_a": "",
+    "calc_b": "86000",
+    "calc_c": "30"
 }
