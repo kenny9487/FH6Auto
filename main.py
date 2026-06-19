@@ -1,6 +1,6 @@
 import sys
 import os
-# ====== 【修復 OMP 衝突的核心代碼】 ======
+# ====== 【OMP 衝突的核心代碼】 ======
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 # =======================================
 import json
@@ -9,7 +9,7 @@ import shutil
 import ctypes
 import subprocess
 import webbrowser
-# ====== 【新增】：啟動前置環境檢測 (防閃退機制) ======
+# ====== 啟動前置環境檢測 (防閃退機制) ======
 def check_windows_dependencies():
     if sys.platform != "win32":
         return
@@ -82,16 +82,49 @@ def get_internal_dir():
 
 APP_DIR = get_app_dir()
 INTERNAL_DIR = get_internal_dir()
-# 【新增 config 目錄路徑】
+# 【config 目錄路徑】
 CONFIG_DIR = os.path.join(APP_DIR, "config")
 USER_CONFIG_FILE = os.path.join(APP_DIR, "config.json")      # <--- 全面替換為 config.json
 LOG_FILE = os.path.join(APP_DIR, "bot_log.txt")
 CACHE_DIR = os.path.join(APP_DIR, "cache")
 TEMPLATE_CACHE_FILE = os.path.join(CACHE_DIR, "template_cache.pkl")
 TEMPLATE_META_FILE = os.path.join(CACHE_DIR, "template_meta.json")
-CURRENT_VERSION = "1.1.7.1"
-def auto_extract_configs():
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+DEFAULT_CURRENT_VERSION = "2.0"
+APP_DISPLAY_NAME = "FH6Auto Fork"
+APP_ATTRIBUTION = "Based on YOUSTHEONE&As7tesia&CaiSF25/FH6Auto"
+DEFAULT_UPSTREAM_REPO_URL = "https://github.com/YOUSTHEONE/FH6Auto"
+DEFAULT_PROJECT_REPO_URL = "https://github.com/CaiSF25/FH6Auto-Fork"
+DEFAULT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/CaiSF25/FH6Auto-Fork/refs/heads/main/version.json"
+
+def load_local_version_meta():
+    defaults = {
+        "version": DEFAULT_CURRENT_VERSION,
+        "project_url": DEFAULT_PROJECT_REPO_URL,
+        "upstream_url": DEFAULT_UPSTREAM_REPO_URL,
+        "manifest_url": DEFAULT_UPDATE_MANIFEST_URL,
+    }
+    try:
+        if os.path.exists(LOCAL_VERSION_FILE):
+            with open(LOCAL_VERSION_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                defaults.update({k: v for k, v in data.items() if v})
+    except Exception:
+        pass
+    return defaults
+
+LOCAL_VERSION_META = load_local_version_meta()
+CURRENT_VERSION = str(LOCAL_VERSION_META.get("version", DEFAULT_CURRENT_VERSION))
+UPSTREAM_REPO_URL = str(LOCAL_VERSION_META.get("upstream_url", DEFAULT_UPSTREAM_REPO_URL))
+PROJECT_REPO_URL = str(LOCAL_VERSION_META.get("project_url", DEFAULT_PROJECT_REPO_URL))
+UPDATE_MANIFEST_URL = str(LOCAL_VERSION_META.get("manifest_url", DEFAULT_UPDATE_MANIFEST_URL))
+
+def build_latest_release_api_url(repo_url):
+    m = re.match(r"^https://github\.com/([^/]+)/([^/]+?)/?$", str(repo_url).strip())
+    if not m:
+        return ""
+    owner, repo = m.groups()
+    return f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     
     # 向下相容，自動重命名並遷移老版本 bot_config
     old_configs = [
@@ -322,7 +355,7 @@ class FH_UltimateBot(ctk.CTk):
     def __init__(self):
         super().__init__()
         #窗口相關
-        self.title(f"FH6Auto by YSTO v{CURRENT_VERSION}")
+        self.title(f"FH6Auto by kenny9487 v{CURRENT_VERSION}")
         self.geometry("1800x800")
         #self.minsize(980, 560)
         self.attributes("-topmost", False)
@@ -344,7 +377,7 @@ class FH_UltimateBot(ctk.CTk):
         self.car_counter = 0
         self.cj_counter = 0
         self.sc_count = 0
-        self.spin_counter = 0
+        self.spin_counter = 0 # 新增
         self.global_loop_current = 0
         self.detail_state_confirmed = False  #初始化詳情狀態鎖定標識
 
@@ -370,7 +403,7 @@ class FH_UltimateBot(ctk.CTk):
         threading.Thread(target=background_init, daemon=True).start()
         
         #載入設定檔
-        auto_extract_configs()  
+        #auto_extract_configs()  
         self.load_config()
 
         self.setup_ui()
@@ -380,7 +413,7 @@ class FH_UltimateBot(ctk.CTk):
         
         self.log("免責聲明：本腳本僅供 Python 自動化技術交流與學習使用。請勿用於商業盈利或破壞遊戲平衡，因使用本腳本造成的帳號封禁等損失，由使用者自行承擔。")
         self.log("工具運行目錄不要有中文")
-        self.log("默認刷圖車輛：【SUBARU Impreza 22B-STi Version】【調校S2 834】【保持默認塗裝】【收藏車輛】")
+        self.log("默認刷圖車輛：【SUBARU Impreza 22B-STi Version】【調校S2  834】【保持默認塗裝】【收藏車輛】")
         self.log("啟動前先將鍵盤設置為【英文鍵盤】")
         self.log("遊戲設置為【自動轉向】【自動擋】，遊戲語言設置為【繁體中文】")
         self.log("大部分以圖像識別作為引導，減少機器盲目操作的風險，但仍無法完全避免，使用前請做好準備")
@@ -407,11 +440,16 @@ class FH_UltimateBot(ctk.CTk):
             val = "".join(c for c in self.entry_car.get() if c.isdigit())
             if val == "":
                 val = "0"
+                
+            # 1. 同步到移除車輛 (sc_count)
             self.entry_sc.delete(0, "end")
             self.entry_sc.insert(0, val)
+            
+            # 2. 【新增】同步到超級抽獎 (cj_count)
             if hasattr(self, 'entry_cj'):
                 self.entry_cj.delete(0, "end")
                 self.entry_cj.insert(0, val)
+                
         except Exception:
             pass
 
@@ -457,10 +495,10 @@ class FH_UltimateBot(ctk.CTk):
     def load_config(self):
         # 1. 直接使用內置字典作為“絕對底本”（最安全，無視打包丟文件問題）
         self.config = {
-            "race_count": 99,
-            "buy_count": 30, 
-            "cj_count": 30, 
-            "sc_count": 30,
+            "race_count": 20,
+            "buy_count": 33, 
+            "cj_count": 33, 
+            "sc_count": 33,
             "chk_1": True, 
             "chk_2": True, 
             "chk_3": True, 
@@ -479,7 +517,8 @@ class FH_UltimateBot(ctk.CTk):
             "sell_mode": 1,
             "cj_mode": 2,  
             "auto_close_game": False, 
-            "auto_shutdown": False    
+            "auto_shutdown": False,
+            "race_timeout": 180
         }
         ext_path = USER_CONFIG_FILE
         # 2. 讀取用戶的 config.json，並與底本合併（自動補全缺失項）
@@ -507,6 +546,7 @@ class FH_UltimateBot(ctk.CTk):
             self.config["sc_count"] = int(self.entry_sc.get())
             self.config["global_loops"] = int(self.entry_global_loop.get())
             self.config["share_code"] = "".join(c for c in self.entry_share.get() if c.isdigit())
+            self.config["race_timeout"] = int(self.entry_race_timeout.get())
             #self.config["base_width"] = int(self.entry_base_w.get())
             self.config["next_1"] = int(self.entry_next1.get())
             self.config["next_2"] = int(self.entry_next2.get())
@@ -574,31 +614,31 @@ class FH_UltimateBot(ctk.CTk):
             self.log("單車成本或技能點不能為 0！")
             return
 
-        # 1. 基础转换（总车数 & 总跑图数）
+        # 1. 基礎轉換（總車數 & 總跑圖數）
         total_cars = target_cr // cost_per_car
         total_races = (total_cars * sp_per_car) // 50
 
         if total_races <= 0:
-            self.log(f"目标金额不足(只够买{total_cars}辆车)，无法产生有效跑图！")
+            self.log(f"目標金額不足(只夠買{total_cars}輛車)，無法產生有效跑圖！")
             return
 
-        # 2. 核心分配逻辑
+        # 2. 核心分配邏輯
         if total_races <= 20:
             final_loops = 1
             final_races_per_loop = total_races
         else:
             import math
-            # 计算最少需要几个大循环（除以20后无条件进位）
+            # 計算最少需要幾個大循環（除以20後無條件進位）
             loops = math.ceil(total_races / 20)
             
-            # 将总跑图数平均分配到每个大循环，不足一次的当一次算（无条件进位）
+            # 將總跑圖數平均分配到每個大循環，不足一次的當一次算（無條件進位）
             final_races_per_loop = math.ceil(total_races / loops)
             final_loops = loops 
 
-        # 3. 反推每一轮买车、抽奖、卖车的具体数量
+        # 3. 反推每一輪買車、抽獎、賣車的具體數量
         cars_per_loop = (final_races_per_loop * 50) // sp_per_car
         
-        # 强制限制其他操作最多 33 次
+        # 強制限制其他操作最多 33 次
         if cars_per_loop > 33:
             cars_per_loop = 33
 
@@ -632,34 +672,34 @@ class FH_UltimateBot(ctk.CTk):
         self.config_frame.pack(fill="x")
 
         def create_box(parent, title, btn_text, btn_cmd, btn_color, def_val=None):
-                frame = ctk.CTkFrame(parent, width=190, height=300, corner_radius=12, border_width=1, border_color="#2B2B2B")
-                frame.pack_propagate(False)
-                frame.pack(side="left", padx=4)
+         frame = ctk.CTkFrame(parent, width=190, height=300, corner_radius=12, border_width=1, border_color="#2B2B2B")
+         frame.pack_propagate(False)
+         frame.pack(side="left", padx=4)
 
-                ctk.CTkLabel(frame, text=title, font=ctk.CTkFont(weight="bold", size=20)).pack(pady=(14, 10))
+         ctk.CTkLabel(frame, text=title, font=ctk.CTkFont(family="微軟正黑體", weight="bold", size=20)).pack(pady=(14, 10))
 
-                btn = ctk.CTkButton(frame, text=btn_text, fg_color=btn_color, hover_color=btn_color, command=btn_cmd, width=140, height=38, corner_radius=10)
-                btn.pack(pady=8, padx=10)
+         btn = ctk.CTkButton(frame, text=btn_text, fg_color=btn_color, hover_color=btn_color, command=btn_cmd, width=140, height=38, corner_radius=10)
+         btn.pack(pady=8, padx=10)
 
-                entry = None
-                lbl = None
-                if def_val is not None:
-                    entry = ctk.CTkEntry(frame, width=95, height=34, justify="center", corner_radius=8)
-                    entry.insert(0, str(def_val))
-                    entry.pack(pady=8)
-                    lbl = ctk.CTkLabel(frame, text=f"執行: 0 / {def_val}", text_color="#A0A0A0", font=ctk.CTkFont(size=16))
-                    lbl.pack(pady=8)
-                return frame, btn, entry, lbl
+         entry = None
+         lbl = None
+         if def_val is not None:
+             entry = ctk.CTkEntry(frame, width=95, height=34, justify="center", corner_radius=8)
+             entry.insert(0, str(def_val))
+             entry.pack(pady=8)
+             lbl = ctk.CTkLabel(frame, text=f"執行: 0 / {def_val}", text_color="#A0A0A0", font=ctk.CTkFont(family="微軟正黑體", size=16))
+             lbl.pack(pady=8)
+         return frame, btn, entry, lbl
 
         def create_next_step(parent, var_checked, def_step, box_h=300):
-            frame = ctk.CTkFrame(parent, width=90, height=box_h, corner_radius=12, border_width=1, border_color="#2B2B2B")
-            frame.pack(side="left", padx=2)
+            frame = ctk.CTkFrame(parent, width=110, height=box_h, corner_radius=12, border_width=1, border_color="#2B2B2B")
+            frame.pack(side="left", padx=3)
             frame.pack_propagate(False)
 
             ctk.CTkLabel(
                 frame,
                 text="下一步驟",
-                font=ctk.CTkFont(size=18, weight="bold"),
+                font=ctk.CTkFont(family="微軟正黑體", size=18, weight="bold"),
                 text_color="#5DADE2",
             ).pack(pady=(55, 10))
 
@@ -679,15 +719,55 @@ class FH_UltimateBot(ctk.CTk):
 
         box_race, self.btn_race, self.entry_race, self.lbl_race = create_box(
             self.config_frame,
-            "1. 迴圈跑圖",
+            "1. 循環跑圖",
             "開始",
             lambda: self.start_pipeline("race"),
             "#1F6AA5",
             self.config.get("race_count", 99),
         )
-        self.entry_share = ctk.CTkEntry(box_race, width=130, justify="center", placeholder_text="藍圖數字代碼")
+        #超時設置
+        race_timeout_frame = ctk.CTkFrame(box_race, fg_color="transparent")
+        race_timeout_frame.pack(fill="x", padx=10, pady=(4, 0))
+        
+        ctk.CTkLabel(
+            race_timeout_frame, 
+            text="超時重置 (秒):", 
+            font=ctk.CTkFont(family="微軟正黑體", size=11),
+            text_color="#A0A0A0"
+        ).pack(side="left")
+        
+        self.entry_race_timeout = ctk.CTkEntry(
+            race_timeout_frame, 
+            width=50, 
+            height=24, 
+            justify="center", 
+            corner_radius=6,
+            font=ctk.CTkFont(family="微軟正黑體", size=11)
+        )
+        self.entry_race_timeout.insert(0, str(self.config.get("race_timeout", 180)))
+        self.entry_race_timeout.pack(side="left", padx=(5, 0))
+        #
+        share_code_frame = ctk.CTkFrame(box_race, fg_color="transparent")
+        share_code_frame.pack(fill="x", padx=10, pady=(4, 0))
+        
+        ctk.CTkLabel(
+            share_code_frame, 
+            text="藍圖代碼:", 
+            font=ctk.CTkFont(family="微軟正黑體", size=11),
+            text_color="#A0A0A0"
+        ).pack(side="left")
+        
+        self.entry_share = ctk.CTkEntry(
+            share_code_frame, 
+            width=100, 
+            justify="center", 
+            placeholder_text="藍圖數字代碼",
+            corner_radius=6,
+            font=ctk.CTkFont(family="微軟正黑體", size=11)
+        )
         self.entry_share.insert(0, self.config.get("share_code", "890169683"))
-        self.entry_share.pack(pady=4)
+        self.entry_share.pack(side="left", padx=(5, 0), fill="x", expand=True)
+
 
         self.next_frame1, self.entry_next1, self.chk1 = create_next_step(
             self.config_frame, self.var_chk1, self.config.get("next_1", 2)
@@ -709,7 +789,7 @@ class FH_UltimateBot(ctk.CTk):
 
         self.box_cj = ctk.CTkFrame(
             self.config_frame,
-            width=330,
+            width=360,
             height=300,
             corner_radius=12,
             border_width=1,
@@ -724,7 +804,7 @@ class FH_UltimateBot(ctk.CTk):
         left_cj = ctk.CTkFrame(top_cj, fg_color="transparent")
         left_cj.pack(side="left", padx=10)
 
-        ctk.CTkLabel(left_cj, text="3. 超級抽獎", font=ctk.CTkFont(weight="bold", size=20)).pack(pady=(0, 8))
+        ctk.CTkLabel(left_cj, text="3. 超級抽獎", font=ctk.CTkFont(family="微軟正黑體", weight="bold", size=20)).pack(pady=(0, 8))
         
         self.btn_cj = ctk.CTkButton(
             left_cj,
@@ -744,7 +824,7 @@ class FH_UltimateBot(ctk.CTk):
             width=160,
             height=28,
             corner_radius=6,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(family="微軟正黑體", size=12),
             fg_color="#8E44AD",
             button_color="#7D3C98",
             button_hover_color="#6C3483"
@@ -764,7 +844,7 @@ class FH_UltimateBot(ctk.CTk):
             left_cj,
             text=f"執行: 0 / {self.config.get('cj_count', 30)}",
             text_color="#A0A0A0",
-            font=ctk.CTkFont(size=14),
+            font=ctk.CTkFont(family="微軟正黑體", size=14),
         )
         self.lbl_cj.pack(pady=(2, 8))
 
@@ -811,7 +891,7 @@ class FH_UltimateBot(ctk.CTk):
         ctk.CTkLabel(
             self.grid_frame,
             text="技能樹",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(family="微軟正黑體", size=14, weight="bold"),
             text_color="#A0A0A0",
         ).grid(row=4, column=0, columnspan=4, pady=(8, 0))
 
@@ -834,7 +914,7 @@ class FH_UltimateBot(ctk.CTk):
             width=180,
             height=28,
             corner_radius=6,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(family="微軟正黑體", size=12),
             fg_color="#D97706",
             button_color="#B96705",
             button_hover_color="#995704"
@@ -864,16 +944,14 @@ class FH_UltimateBot(ctk.CTk):
         self.next_frame5, self.entry_next5, self.chk5 = create_next_step(
             self.config_frame, self.var_chk5, self.config.get("next_5", 1)
         )
-        # ====== 抽離到底部的全域設置欄 (放在上方) ======
-        # 【修改1】把 self.top_container 改成了 self
+        # ====== 抽離到底部的全域設置欄 ======
         self.global_settings_frame = ctk.CTkFrame(self, fg_color="#2B2B2B", height=45, corner_radius=10)
-        # 【修改2】加上了 padx=18，讓它和上下邊緣對齊
         self.global_settings_frame.pack(fill="x", padx=18, pady=(15, 0))
         self.global_settings_frame.pack_propagate(False)
         ctk.CTkLabel(
             self.global_settings_frame, 
-            text="⚙️ 迴圈與守護設置", 
-            font=ctk.CTkFont(weight="bold", size=15), 
+            text="⚙️ 循環與守護設置", 
+            font=ctk.CTkFont(family="微軟正黑體", weight="bold", size=15), 
             text_color="#F1C40F"
         ).pack(side="left", padx=(15, 20))
         ctk.CTkLabel(self.global_settings_frame, text="大循環次數:").pack(side="left", padx=(10, 5))
@@ -887,14 +965,14 @@ class FH_UltimateBot(ctk.CTk):
         self.le_restart_cmd = ctk.CTkEntry(self.global_settings_frame, width=250, height=28)
         self.le_restart_cmd.insert(0, self.config.get("restart_cmd", "start steam://run/2483190"))
         self.le_restart_cmd.pack(side="left", padx=(0, 20))
-        # ====== 【新增】：添加自動關遊戲和關機的核取方塊 ======
+        # ======添加自動關遊戲和關機的核取方塊 ======
         self.var_auto_close = ctk.BooleanVar(value=self.config.get("auto_close_game", False))
         self.cb_auto_close = ctk.CTkCheckBox(self.global_settings_frame, text="任務完成關遊戲", variable=self.var_auto_close)
         self.cb_auto_close.pack(side="left", padx=(10, 15))
         self.var_auto_shutdown = ctk.BooleanVar(value=self.config.get("auto_shutdown", False))
         self.cb_auto_shutdown = ctk.CTkCheckBox(self.global_settings_frame, text="任務完成關機", variable=self.var_auto_shutdown)
         self.cb_auto_shutdown.pack(side="left", padx=(5, 10))
-        # ====== 【新增】：測試自動開機流程按鈕 ======
+        # ======測試自動開機流程按鈕 ======
         self.btn_test_boot = ctk.CTkButton(
             self.global_settings_frame, 
             text="測試啟動流程", 
@@ -907,18 +985,15 @@ class FH_UltimateBot(ctk.CTk):
         #self.btn_test_boot.pack(side="left", padx=(0, 20))
         
         # =================================
-
-
-        # ====== 新增：智慧計算分配工具列 (放在下方) ======
-        # 【修改1】把 self.top_container 改成了 self
+        # ======智慧計算分配工具列======
         self.calc_frame = ctk.CTkFrame(self, fg_color="#2B2B2B", height=45, corner_radius=10)
-        # 【修改2】加上了 padx=18，讓它和上下邊緣對齊
+        
         self.calc_frame.pack(fill="x", padx=18, pady=(10, 0))
         self.calc_frame.pack_propagate(False)
         ctk.CTkLabel(
             self.calc_frame, 
             text="次數計算器", 
-            font=ctk.CTkFont(weight="bold", size=15), 
+            font=ctk.CTkFont(family="微軟正黑體", weight="bold", size=15), 
             text_color="#2EA043"
         ).pack(side="left", padx=(15, 20))
         ctk.CTkLabel(self.calc_frame, text="CR:").pack(side="left", padx=(0, 5))
@@ -963,7 +1038,7 @@ class FH_UltimateBot(ctk.CTk):
         self.entry_next1.bind("<FocusOut>", lambda e: self.normalize_step_entry(self.entry_next1, 2))
         self.entry_next2.bind("<FocusOut>", lambda e: self.normalize_step_entry(self.entry_next2, 3))
         self.entry_next3.bind("<FocusOut>", lambda e: self.normalize_step_entry(self.entry_next3, 4))
-        self.entry_next4.bind("<FocusOut>", lambda e: self.normalize_step_entry(self.entry_next4, 1))
+        self.entry_next4.bind("<FocusOut>", lambda e: self.normalize_step_entry(self.entry_next4, 5))
         self.entry_next5.bind("<FocusOut>", lambda e: self.normalize_step_entry(self.entry_next5, 1))
 
         if not self.entry_sc.get().strip():
@@ -973,33 +1048,33 @@ class FH_UltimateBot(ctk.CTk):
         self.mini_frame = ctk.CTkFrame(self, fg_color="#1E1E1E", corner_radius=10)
 
         # 1. 日誌區 (最左側，佔據主要伸縮空間)
-        self.mini_log_box = ctk.CTkTextbox(self.mini_frame, state="disabled", wrap="word", font=ctk.CTkFont(size=13), fg_color="#2B2B2B")
+        self.mini_log_box = ctk.CTkTextbox(self.mini_frame, state="disabled", wrap="word", font=ctk.CTkFont(family="微軟正黑體", size=13), fg_color="#2B2B2B")
         self.mini_log_box.pack(side="left", fill="both", expand=True, padx=(10, 5), pady=10)
 
         # 2. 資訊區 (垂直排列任務狀態和耗時)
         self.mini_info_frame = ctk.CTkFrame(self.mini_frame, fg_color="transparent")
         self.mini_info_frame.pack(side="left", fill="y", padx=5, pady=10)
 
-        self.lbl_mini_task = ctk.CTkLabel(self.mini_info_frame, text="當前任務: 等待中", font=ctk.CTkFont(size=14, weight="bold"), text_color="#3498DB")
+        self.lbl_mini_task = ctk.CTkLabel(self.mini_info_frame, text="當前任務: 等待中", font=ctk.CTkFont(family="微軟正黑體", size=14, weight="bold"), text_color="#3498DB")
         self.lbl_mini_task.pack(pady=(5, 2), anchor="w")
 
-        self.lbl_mini_prog = ctk.CTkLabel(self.mini_info_frame, text="任務進度: 0 / 0", font=ctk.CTkFont(size=13))
+        self.lbl_mini_prog = ctk.CTkLabel(self.mini_info_frame, text="任務進度: 0 / 0", font=ctk.CTkFont(family="微軟正黑體", size=13))
         self.lbl_mini_prog.pack(pady=2, anchor="w")
 
-        self.lbl_mini_loop = ctk.CTkLabel(self.mini_info_frame, text="大循環: 0 / 0", font=ctk.CTkFont(size=13))
+        self.lbl_mini_loop = ctk.CTkLabel(self.mini_info_frame, text="大循環: 0 / 0", font=ctk.CTkFont(family="微軟正黑體", size=13))
         self.lbl_mini_loop.pack(pady=2, anchor="w")
 
-        self.lbl_mini_time = ctk.CTkLabel(self.mini_info_frame, text="總耗時: 00:00:00", font=ctk.CTkFont(size=13))
+        self.lbl_mini_time = ctk.CTkLabel(self.mini_info_frame, text="總耗時: 00:00:00", font=ctk.CTkFont(family="微軟正黑體", size=13))
         self.lbl_mini_time.pack(pady=2, anchor="w")
         # 3. 按鈕區 (靠右排列)
-        self.btn_mini_stop = ctk.CTkButton(self.mini_frame, text="⏸ 停止 (F8)", fg_color="#DA3633", hover_color="#B02A37", width=90, font=ctk.CTkFont(weight="bold"), command=self.stop_all)
+        self.btn_mini_stop = ctk.CTkButton(self.mini_frame, text="⏸ 停止 (F8)", fg_color="#DA3633", hover_color="#B02A37", width=90, font=ctk.CTkFont(family="微軟正黑體", weight="bold"), command=self.stop_all)
         self.btn_mini_stop.pack(side="left", fill="y", padx=5, pady=10)
 
-        # ====== 【新增】迷你面板上的暫停按鈕 ======
-        self.btn_mini_pause = ctk.CTkButton(self.mini_frame, text="⏸ 暫停 (F9)", fg_color="#F1C40F", hover_color="#D4AC0D", width=90, font=ctk.CTkFont(weight="bold"), command=self.toggle_pause)
+        # ======迷你面板上的暫停按鈕 ======
+        self.btn_mini_pause = ctk.CTkButton(self.mini_frame, text="⏸ 暫停 (F9)", fg_color="#F1C40F", hover_color="#D4AC0D", width=90, font=ctk.CTkFont(family="微軟正黑體", weight="bold"), command=self.toggle_pause)
         self.btn_mini_pause.pack(side="left", fill="y", padx=5, pady=10)
 
-        self.btn_mini_support = ctk.CTkButton(self.mini_frame, text="❤ 支持", fg_color="#F97316", hover_color="#EA580C", width=60, font=ctk.CTkFont(weight="bold"), command=self.open_support_window)
+        self.btn_mini_support = ctk.CTkButton(self.mini_frame, text="❤ 支持", fg_color="#F97316", hover_color="#EA580C", width=60, font=ctk.CTkFont(family="微軟正黑體", weight="bold"), command=self.open_support_window)
         self.btn_mini_support.pack(side="left", fill="y", padx=(5, 10), pady=10)
 
 
@@ -1014,7 +1089,7 @@ class FH_UltimateBot(ctk.CTk):
             width=180,
             height=60,
             corner_radius=12,
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(family="微軟正黑體", size=16, weight="bold"),
             command=self.stop_all,
         )
         self.btn_stop.pack(side="left", padx=6)
@@ -1025,7 +1100,7 @@ class FH_UltimateBot(ctk.CTk):
             wrap="word",
             corner_radius=12,
             height=120,
-            font=ctk.CTkFont(size=18),
+            font=ctk.CTkFont(family="微軟正黑體", size=18),
         )
         self.log_box.pack(side="left", fill="both", expand=True, padx=8)
 
@@ -1036,7 +1111,7 @@ class FH_UltimateBot(ctk.CTk):
             hover_color="#EA580C",
             height=42,
             corner_radius=12,
-            font=ctk.CTkFont(weight="bold", size=15),
+            font=ctk.CTkFont(family="微軟正黑體", weight="bold", size=15),
             command=self.open_support_window,
         )
         self.btn_support.pack(fill="x", padx=18, pady=(6, 12))
@@ -1050,8 +1125,8 @@ class FH_UltimateBot(ctk.CTk):
             return
 
         self.support_win = ctk.CTkToplevel(self)
-        self.support_win.title("感謝支持 & 更新")
-        self.support_win.geometry("340x520")
+        self.support_win.title("关于此版本")
+        self.support_win.geometry("380x420")
         self.support_win.attributes("-topmost", True)
         self.support_win.resizable(False, False)
 
@@ -1063,53 +1138,137 @@ class FH_UltimateBot(ctk.CTk):
             pass
 
         self.support_win.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 340) // 2
-        y = self.winfo_y() + (self.winfo_height() - 520) // 2
+        x = self.winfo_x() + (self.winfo_width() - 380) // 2
+        y = self.winfo_y() + (self.winfo_height() - 420) // 2
         self.support_win.geometry(f"+{x}+{y}")
 
         ctk.CTkLabel(
             self.support_win,
-            text="感謝您的支持與鼓勵",
+            text=APP_DISPLAY_NAME,
             font=ctk.CTkFont(weight="bold", size=18),
             text_color="#F97316",
         ).pack(pady=(20, 6))
 
         ctk.CTkLabel(
             self.support_win,
-            text="您的支持是我持續優化的動力！",
-            font=ctk.CTkFont(size=12),
+            text=f"v{CURRENT_VERSION}",
+            font=ctk.CTkFont(size=13, weight="bold"),
         ).pack(pady=4)
 
-        qr_path = get_asset_path("qrcode.png")
-        try:
-            if qr_path and os.path.exists(qr_path):
-                img = Image.open(qr_path)
-                qr_img = ctk.CTkImage(light_image=img, size=(210, 210))
-                qr_label = ctk.CTkLabel(self.support_win, text="", image=qr_img)
-                qr_label.image = qr_img
-                qr_label.pack(pady=10)
-            else:
-                ctk.CTkLabel(self.support_win, text="（未找到內置 qrcode.png）", text_color="gray").pack(pady=40)
-        except Exception:
-            ctk.CTkLabel(self.support_win, text="（二維碼載入失敗）", text_color="gray").pack(pady=40)
-
-        ctk.CTkButton(
+        ctk.CTkLabel(
             self.support_win,
-            text="前往 愛發電 贊助主頁",
-            fg_color="#8E44AD",
-            hover_color="#7D3C98",
-            command=lambda: webbrowser.open("https://ifdian.net/a/yousto"),
-        ).pack(pady=5)
+            text=APP_ATTRIBUTION,
+            text_color="#A0A0A0",
+            font=ctk.CTkFont(size=12),
+        ).pack(pady=(2, 10))
+
+        about_box = ctk.CTkTextbox(self.support_win, height=120, width=320, corner_radius=10)
+        about_box.pack(padx=20, pady=8, fill="x")
+        about_box.insert("end", "这是一个基于上游项目修改的 fork 版本。\n\n")
+        about_box.insert("end", "当前界面标题、流程逻辑和模板替换功能已按本地修改版本调整。\n")
+        about_box.insert("end", "发布到你自己的 GitHub 时，建议同时保留对上游项目的引用说明。")
+        about_box.configure(state="disabled")
 
         ctk.CTkFrame(self.support_win, height=2, fg_color="#333333").pack(fill="x", padx=20, pady=10)
 
         self.lbl_version = ctk.CTkLabel(
             self.support_win,
-            text=f"當前版本: v{CURRENT_VERSION}",
+            text=f"当前版本: v{CURRENT_VERSION}",
             text_color="gray",
             font=ctk.CTkFont(size=12),
         )
         self.lbl_version.pack()
+
+        def check_update_logic():
+            self.ui_call(self.lbl_version.configure, text="正在连接 Github...", text_color="#3498DB")
+            try:
+                remote_ver = "0.0.0"
+                remote_url = ""
+
+                # Prefer the lightweight manifest, but fall back to GitHub's
+                # latest release API so a forgotten version.json update does
+                # not silently hide a newer release.
+                manifest_url = UPDATE_MANIFEST_URL
+                resp = requests.get(manifest_url, timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    remote_ver = str(data.get("version", "0.0.0"))
+                    remote_url = str(data.get("url", ""))
+
+                release_api_url = build_latest_release_api_url(PROJECT_REPO_URL)
+                if release_api_url:
+                    api_resp = requests.get(
+                        release_api_url,
+                        timeout=5,
+                        headers={"Accept": "application/vnd.github+json"},
+                    )
+                    if api_resp.status_code == 200:
+                        release_data = api_resp.json()
+                        api_ver = str(release_data.get("tag_name", "")).strip()
+                        api_url = str(release_data.get("html_url", "")).strip()
+                        if parse_version(api_ver) > parse_version(remote_ver):
+                            remote_ver = api_ver
+                            remote_url = api_url
+
+                if parse_version(remote_ver) > parse_version(CURRENT_VERSION):
+                    if remote_url.startswith("https://github.com/"):
+                        self.ui_call(
+                            self.lbl_version.configure,
+                            text=f"发现新版本 v{remote_ver}，已打开浏览器！",
+                            text_color="#2EA043",
+                        )
+                        webbrowser.open(remote_url)
+                    else:
+                        self.ui_call(
+                            self.lbl_version.configure,
+                            text="发现更新，但链接不可信，已拦截",
+                            text_color="#DA3633",
+                        )
+                else:
+                    self.ui_call(
+                        self.lbl_version.configure,
+                        text=f"当前已是最新版本 (v{CURRENT_VERSION})",
+                        text_color="gray",
+                    )
+            except Exception:
+                self.ui_call(
+                    self.lbl_version.configure,
+                    text="检查更新失败 (网络超时或无法访问)",
+                    text_color="#DA3633",
+                )
+
+        btn_frame = ctk.CTkFrame(self.support_win, fg_color="transparent")
+        btn_frame.pack(pady=6)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="检查更新",
+            width=100,
+            height=30,
+            fg_color="#444444",
+            hover_color="#555555",
+            command=lambda: threading.Thread(target=check_update_logic, daemon=True).start(),
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="当前项目",
+            width=100,
+            height=30,
+            fg_color="#2EA043",
+            hover_color="#238636",
+            command=lambda: webbrowser.open(PROJECT_REPO_URL),
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="上游项目",
+            width=100,
+            height=30,
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
+            command=lambda: webbrowser.open(UPSTREAM_REPO_URL),
+        ).pack(side="left", padx=5)
 
         def check_update_logic():
             self.ui_call(self.lbl_version.configure, text="正在連接 Github...", text_color="#3498DB")
@@ -1226,7 +1385,7 @@ class FH_UltimateBot(ctk.CTk):
         SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
 
     def hw_press(self, key, delay=0.08):
-        self.check_pause()  # <--- 【新增】如果正在暫停，腳本會在此處無限等待直到恢復
+        self.check_pause()  # 如果正在暫停，腳本會在此處無限等待直到恢復
         if not self.is_running:
             return
         self.hw_key_down(key)
@@ -1256,7 +1415,7 @@ class FH_UltimateBot(ctk.CTk):
         cmd = Input(ctypes.c_ulong(0), ii_)
         SendInput(1, ctypes.pointer(cmd), ctypes.sizeof(cmd))
     def game_click(self, pos, double=False):
-        self.check_pause()  # <--- 【新增】攔截滑鼠點擊
+        self.check_pause()  #攔截滑鼠點擊
         if not self.is_running or not pos:
             return
         x, y = int(pos[0]), int(pos[1])
@@ -1417,9 +1576,9 @@ class FH_UltimateBot(ctk.CTk):
             if hasattr(self, "lbl_mini_loop"):
                 self.ui_call(self.lbl_mini_loop.configure, text=f"大循環: {self.global_loop_current} / {total_loops}")
 
-            # 【新增】：全域連續失敗計數器
+            #全域連續失敗計數器
             continuous_failures = 0 
-            # 【你可以修改這裡】：設置全域允許的最大連續恢復次數（比如 3 次）
+            #設置全域允許的最大連續恢復次數
             MAX_RECOVERIES = 10 
 
             while self.is_running:
@@ -1434,14 +1593,14 @@ class FH_UltimateBot(ctk.CTk):
                     elif step_name == "cj":
                         success = self.logic_super_wheelspin(int(self.entry_cj.get()))
                     elif step_name == "sell":
-                        # ====== 【新增】：判斷下拉清單的模式 ======
+                        # ======判斷下拉清單的模式 ======
                         sell_mode = self.opt_sell_mode.get()
                         if "模式1" in sell_mode:
                             success = self.find_and_remove_consumable_car(int(self.entry_sc.get()))
                         else:
                             success = self.sell_consumable_car(int(self.entry_sc.get()))
                     elif step_name == "spin": # 新增開抽執行判斷
-                        success = self.logic_consume_wheelspins()
+                     success = self.logic_consume_wheelspins()
                         # =========================================
                 except Exception as e:
                     self.log(f"執行模組 {step_name} 時異常: {e}")
@@ -1470,39 +1629,39 @@ class FH_UltimateBot(ctk.CTk):
                     # 只要這一個大步驟成功跑完了，就把連續失敗次數清零，獎勵它繼續跑！
                     continuous_failures = 0
                 #v1.0.1
-        # ====== 核心流轉與無限迴圈邏輯 ======
-                    next_idx = curr_idx + 1 # 默認前往下一步
-                    if curr_idx == 0:
-                        if self.var_chk1.get():
-                            try: next_idx = max(0, min(4, int(self.entry_next1.get()) - 1))
-                            except Exception: next_idx = 1
-                        else: break
-                    elif curr_idx == 1:
-                        if self.var_chk2.get():
-                            try: next_idx = max(0, min(4, int(self.entry_next2.get()) - 1))
-                            except Exception: next_idx = 2
-                        else: break
-                    elif curr_idx == 2:
-                        if self.var_chk3.get():
-                            try: next_idx = max(0, min(4, int(self.entry_next3.get()) - 1))
-                            except Exception: next_idx = 3
-                        else: break
-                    elif curr_idx == 3:
-                        if self.var_chk4.get():
-                            try: next_idx = max(0, min(4, int(self.entry_next4.get()) - 1))
-                            except Exception: next_idx = 4
-                        else: break
-                    elif curr_idx == 4: # 新增第五模組流轉
-                        if self.var_chk5.get():
-                            try: next_idx = max(0, min(4, int(self.entry_next5.get()) - 1))
-                            except Exception: next_idx = 0
-                        else: break
+                # ====== 核心流轉與無限循環邏輯 ======
+                next_idx = curr_idx + 1 # 默認前往下一步
+                if curr_idx == 0:
+                    if self.var_chk1.get():
+                        try: next_idx = max(0, min(4, int(self.entry_next1.get()) - 1))
+                        except Exception: next_idx = 1
+                    else: break
+                elif curr_idx == 1:
+                    if self.var_chk2.get():
+                        try: next_idx = max(0, min(4, int(self.entry_next2.get()) - 1))
+                        except Exception: next_idx = 2
+                    else: break
+                elif curr_idx == 2:
+                    if self.var_chk3.get():
+                        try: next_idx = max(0, min(4, int(self.entry_next3.get()) - 1))
+                        except Exception: next_idx = 3
+                    else: break
+                elif curr_idx == 3:
+                    if self.var_chk4.get():
+                        try: next_idx = max(0, min(4, int(self.entry_next4.get()) - 1))
+                        except Exception: next_idx = 4
+                    else: break
+                elif curr_idx == 4: # 新增第五模組流轉
+                    if self.var_chk5.get():
+                        try: next_idx = max(0, min(4, int(self.entry_next5.get()) - 1))
+                        except Exception: next_idx = 0
+                    else: break
 
                 if next_idx <= curr_idx:
                     self.global_loop_current += 1
                     
                     if self.global_loop_current > total_loops:
-                        self.log("達到設定的總迴圈次數，任務圓滿結束。")
+                        self.log("達到設定的總循環次數，任務圓滿結束。")
                         task_finished_normally = True
                         break
                         
@@ -1515,10 +1674,10 @@ class FH_UltimateBot(ctk.CTk):
                     self.car_counter = 0
                     self.cj_counter = 0
                     self.sc_count = 0
-                    self.spin_counter = 0
+                    self.spin_counter = 0 # 新增
                 
                 curr_idx = next_idx
-            # ====== 【新增】：執行自動退游與關機邏輯 ======
+            # ======執行自動退游與關機邏輯 ======
             if task_finished_normally and self.is_running:
                 if self.var_auto_close.get():
                     self.log("【任務圓滿完成】已開啟自動退遊，30秒後強制關閉遊戲...")
@@ -1547,7 +1706,7 @@ class FH_UltimateBot(ctk.CTk):
             return
 
         self.is_running = False
-        self.is_paused = False  # <--- 【新增】徹底停止時必須解除暫停鎖
+        self.is_paused = False  #徹底停止時必須解除暫停鎖
 
         for key in DIK_CODES.keys():
             self.hw_key_up(key)
@@ -1600,7 +1759,7 @@ class FH_UltimateBot(ctk.CTk):
         self.save_config()
         
         # ==========================================
-        # 【新增修復】：隱藏大窗的所有元素，進入迷你模式
+        # 隱藏大窗的所有元素，進入迷你模式
         # ==========================================
         self.config_frame.pack_forget()
         self.global_settings_frame.pack_forget()
@@ -1632,7 +1791,7 @@ class FH_UltimateBot(ctk.CTk):
         self.current_thread = threading.Thread(target=test_runner, daemon=True)
         self.current_thread.start()
     # ==========================================
-    # --- 【新增】暫停與恢復邏輯 ---
+    # ---暫停與恢復邏輯 ---
     # ==========================================
     def toggle_pause(self):
         if not self.is_running:
@@ -1668,10 +1827,10 @@ class FH_UltimateBot(ctk.CTk):
             def on_press(k):
                 if k == keyboard.Key.f8:
                     self.stop_all()
-                elif k == keyboard.Key.f9:  # <--- 【新增】F9 快速鍵
+                elif k == keyboard.Key.f9:  #F9 快速鍵
                     self.toggle_pause()
-                elif k == keyboard.Key.f3:  # <--- 【新增】F3 測試找圖
-                    self.start_test_find_image()
+                #elif k == keyboard.Key.f3:  #F3 測試找圖
+                    #self.start_test_find_image()
 
             with keyboard.Listener(on_press=on_press) as listener:
                 listener.join()
@@ -1682,7 +1841,7 @@ class FH_UltimateBot(ctk.CTk):
     # ==========================================
     # --- 邏輯保障 ---
     # ==========================================
-    # 【新增】：強制切換英文鍵盤與關閉中文狀態
+    #強制切換英文鍵盤與關閉中文狀態
     def set_english_input(self):
         try:
             hwnd = ctypes.windll.user32.GetForegroundWindow()
@@ -1745,7 +1904,7 @@ class FH_UltimateBot(ctk.CTk):
                     
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
                 time.sleep(0.5)
-                # ====== 【新增】：強制關閉中文輸入法 ======
+                # ======強制關閉中文輸入法 ======
                 self.set_english_input()
                 # ==========================================
                 try:
@@ -1791,7 +1950,7 @@ class FH_UltimateBot(ctk.CTk):
                         # 兜底：如果獲取不到螢幕邊界，就用遊戲視窗邊界
                         mx, my, mw, mh = gx, gy, gw, gh
 
-                    # ====== 【修改】：小視窗精准吸附所在顯示器的右上角 ======
+                    # ======小視窗精准吸附所在顯示器的右上角 ======
                     def snap_to_game():
                         if self.is_running:
                             calc_w = int(mw * 0.40)
@@ -1937,7 +2096,7 @@ class FH_UltimateBot(ctk.CTk):
                         # 如果沒進成功，重置時間戳記，腳本會繼續找畫面2，或者再等30秒重試進菜單
                         last_continue_time = time.time()
             
-            time.sleep(1.0) # 每次總迴圈休息1秒，防止CPU佔用過高
+            time.sleep(1.0) # 每次總循環休息1秒，防止CPU佔用過高
 
         self.log("自動啟動超時(5分鐘)，放棄搶救。")
         return False
@@ -1985,14 +2144,14 @@ class FH_UltimateBot(ctk.CTk):
     def attempt_recovery(self):
         self.log("任務執行異常中斷，準備執行中斷點恢復流程...")
         if not self.check_and_focus_game():
-            if not self.is_running: return False  # <--- 【新增防禦】如果用戶已停止，直接退出，不重啟遊戲
+            if not self.is_running: return False  #如果用戶已停止，直接退出，不重啟遊戲
             # 遊戲沒開或者進程沒了，直接走重啟流程
             if not self.restart_game_and_boot():
                 return False
         else:
             # 進程還在，使用【高級狀態機】嘗試動態退回
             if not self.advanced_enter_menu():
-                if not self.is_running: return False  # <--- 【新增防禦】如果用戶已停止，直接退出，絕不殺遊戲！
+                if not self.is_running: return False  #如果用戶已停止，直接退出，絕不殺遊戲！
                 self.log("高級動態退回失敗(可能遊戲卡死或致命報錯)，準備強殺進程並重啟...")
                 try:
                     os.system('taskkill /F /IM forzahorizon6.exe /T')
@@ -2167,7 +2326,7 @@ class FH_UltimateBot(ctk.CTk):
 
     def get_template_meta(self):
         images_dir = self.get_images_root_dir()
-        # 【新增】：在緩存校驗檔中強制寫入當前軟體版本號
+        #在緩存校驗檔中強制寫入當前軟體版本號
         meta_data = {
             "__APP_VERSION__": CURRENT_VERSION
         }
@@ -2275,7 +2434,7 @@ class FH_UltimateBot(ctk.CTk):
                 return
         self.log("檢測到軟體版本更新或本地圖片已修改，開始強制重建圖像緩存(需幾秒鐘)...")
         
-        # 【新增】：暴力物理刪除舊檔，防止資料殘留干擾
+        #暴力物理刪除舊檔，防止資料殘留干擾
         try:
             if os.path.exists(TEMPLATE_CACHE_FILE):
                 os.remove(TEMPLATE_CACHE_FILE)
@@ -2412,7 +2571,7 @@ class FH_UltimateBot(ctk.CTk):
                         max_loc[1] + h // 2 + (region[1] if region else 0),
                     )
                     self.last_positions[template_path] = pos
-                    # 【新增】：在基礎圖像查找中增加詳細日誌返回
+                    #在基礎圖像查找中增加詳細日誌返回
                     self.log(f"[ImageMatch] 命中: {template_path} | 得分: {max_val:.3f} (閾值 {threshold}) | 縮放比: {scale:.3f}")
                     return pos
 
@@ -2478,7 +2637,7 @@ class FH_UltimateBot(ctk.CTk):
                 # 2. 一階匹配：尋找全屏符合的主目標
                 res_main = cv2.matchTemplate(screen_bgr, main_tpl_c, cv2.TM_CCOEFF_NORMED)
                 loc = np.where(res_main >= threshold)
-                checked = set() # 【關鍵優化】：座標去重，解決幾十萬次無效迴圈造成的卡頓
+                checked = set() # 【關鍵優化】：座標去重，解決幾十萬次無效循環造成的卡頓
                 for pt in zip(*loc[::-1]):
                     x, y = pt
                     # 過濾相鄰 10 個圖元內的重複識別點
@@ -2497,7 +2656,7 @@ class FH_UltimateBot(ctk.CTk):
                     res_sub = cv2.matchTemplate(sub_roi, sub_tpl_c, cv2.TM_CCOEFF_NORMED)
                     sub_score = cv2.minMaxLoc(res_sub)[1]
                     if sub_score >= threshold:
-                        # 【新增】：在組合圖像查找中增加詳細日誌返回
+                        #在組合圖像查找中增加詳細日誌返回
                         main_score = res_main[y, x]
                         self.log(f"[ComboMatch] 命中: {main_path}+{sub_path} | 主圖得分: {main_score:.3f} | 元素得分: {sub_score:.3f} (閾值 {threshold}) | 縮放比: {scale:.3f}")
                         return (
@@ -2578,7 +2737,7 @@ class FH_UltimateBot(ctk.CTk):
                     if region:
                         cx += region[0]
                         cy += region[1]
-                    # 【新增】：列印穩定版組合匹配的詳細得分
+                    #列印穩定版組合匹配的詳細得分
                     self.log(f"[StableMatch] 命中: {main_path}+{sub_path} | 主圖: {main_score:.3f} (需>{verify_threshold}) | 元素: {sub_score:.3f} (需>{sub_threshold})")
                     return (cx, cy)
 
@@ -2721,7 +2880,7 @@ class FH_UltimateBot(ctk.CTk):
                 if main_tpl_c is None or sub_tpl_c is None:
                     continue
                 # ==============================
-                # 【預處理】範本只計算一次 (迴圈外)
+                # 【預處理】範本只計算一次 (循環外)
                 # ==============================
                 h_m, w_m = main_tpl_c.shape[:2]
                 
@@ -2911,7 +3070,7 @@ class FH_UltimateBot(ctk.CTk):
                     if region:
                         cx += region[0]
                         cy += region[1]
-                    # 【新增】：列印快速匹配模式得分
+                    #列印快速匹配模式得分
                     main_score = res_main[y, x]
                     self.log(f"[FastMatch] 命中: {main_path}+{sub_path} | 主圖: {main_score:.3f} (需>{threshold}) | 元素: {max_val_sub:.3f} (需>{sub_threshold})")
                     return (cx, cy)
@@ -2984,7 +3143,7 @@ class FH_UltimateBot(ctk.CTk):
                 res = cv2.matchTemplate(screen_bgr, tpl_bgr, cv2.TM_CCOEFF_NORMED, mask=alpha_mask)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
                 if max_val >= threshold:
-                    # 【新增】：帶透明通道的匹配日誌
+                    #帶透明通道的匹配日誌
                     self.log(f"[AlphaMatch] 命中(無視背景): {template_path} | 得分: {max_val:.3f} (閾值 {threshold}) | 縮放比: {scale:.3f}")
                     return (
                         max_loc[0] + w // 2 + (region[0] if region else 0),
@@ -3234,13 +3393,13 @@ class FH_UltimateBot(ctk.CTk):
             screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
             scales_to_try = self.get_scales_to_try(fast_mode=fast_mode)
 
-            # 【新增】範本唯讀取一次，避免每個 scale 都重複載入
+            #範本唯讀取一次，避免每個 scale 都重複載入
             tpl_gray_raw = self.load_template_gray(template_path)
             if tpl_gray_raw is None:
                 return None
 
             for scale in scales_to_try:
-                # 【改動】從原始範本複製，避免反復 resize 污染
+                #從原始範本複製，避免反復 resize 污染
                 tpl_gray = tpl_gray_raw
                 if scale != 1.0:
                     tpl_gray = cv2.resize(tpl_gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
@@ -3262,7 +3421,7 @@ class FH_UltimateBot(ctk.CTk):
                     )
 
                 # ==============================
-                # 【新增】翻轉模式：反相範本匹配
+                # 翻轉模式：反相範本匹配
                 # ==============================
                 if invert_mode:
                     tpl_inv = 255 - tpl_gray
@@ -3301,13 +3460,13 @@ class FH_UltimateBot(ctk.CTk):
             scales_to_try = self.get_scales_to_try(fast_mode=fast_mode)
 
             for img_path in image_list:
-                # 【新增】範本唯讀取一次
+                #範本唯讀取一次
                 tpl_gray_raw = self.load_template_gray(img_path)
                 if tpl_gray_raw is None:
                     continue
 
                 for scale in scales_to_try:
-                    # 【改動】從原始範本複製
+                    # 從原始範本複製
                     tpl_gray = tpl_gray_raw
                     if scale != 1.0:
                         tpl_gray = cv2.resize(tpl_gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
@@ -3329,7 +3488,7 @@ class FH_UltimateBot(ctk.CTk):
                         )
 
                     # ==============================
-                    # 【新增】翻轉模式：反相範本匹配
+                    # 翻轉模式：反相範本匹配
                     # ==============================
                     if invert_mode:
                         tpl_inv = 255 - tpl_gray
@@ -3446,7 +3605,7 @@ class FH_UltimateBot(ctk.CTk):
                     _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
                     if max_val >= threshold:
-                        # 【新增】：多張帶透明通道的匹配日誌
+                        # 多張帶透明通道的匹配日誌
                         self.log(f"[AlphaMatchAny] 命中(無視背景): {template_path} | 得分: {max_val:.3f} (閾值 {threshold}) | 縮放比: {scale:.3f}")
                         return (
                             max_loc[0] + w // 2 + (region[0] if region else 0),
@@ -3478,7 +3637,7 @@ class FH_UltimateBot(ctk.CTk):
         start = time.time()
 
         while self.is_running:
-            # 【新增：暫停期間凍結時間】
+            # 【暫停期間凍結時間】
             if getattr(self, "is_paused", False):
                 self.check_pause()
                 start = time.time() # 恢復後重置倒計時
@@ -3645,15 +3804,15 @@ class FH_UltimateBot(ctk.CTk):
         self.current_thread = threading.Thread(target=test_runner, daemon=True)
         self.current_thread.start()
     # ==========================================
-    # --- 模組：跑圖前置與迴圈跑圖 ---
+    # --- 模組：跑圖前置與循環跑圖 ---
     # ==========================================
     def logic_race(self, target_count):
-        # ====== 【新增】：任務內鎖定，每次進入任務強制重置詳情狀態鎖 ======
+        # ======任務內鎖定，每次進入任務強制重置詳情狀態鎖 ======
         self.detail_state_confirmed = False
         if self.race_counter >= target_count:
             return True
 
-        self.update_running_ui("迴圈跑圖", self.race_counter, target_count)
+        self.update_running_ui("循環跑圖", self.race_counter, target_count)
 
         IMG_SKILL_CAR = "skillcar.png"      # 技能車主圖
         IMG_LIKE_TAG = "liketag.png"
@@ -3851,11 +4010,11 @@ class FH_UltimateBot(ctk.CTk):
             return False
 
         self.game_click(pos_target)
-        time.sleep(0.5)
+        time.sleep(0.8)
         self.hw_press("enter")
         time.sleep(4.0)
 
-        self.log("前置完成，開始迴圈跑圖！")
+        self.log("前置完成，開始循環跑圖！")
 
         while self.race_counter < target_count:
             if not self.is_running:
@@ -3892,16 +4051,16 @@ class FH_UltimateBot(ctk.CTk):
             self.hw_key_down("up") 
             
             # 初始化各類計時器
-            race_start_time = time.time()  # 新增：記錄跑圖發車時間
+            race_start_time = time.time()  #記錄跑圖發車時間
             last_like_chk = time.time()
             last_chk = 0
             finished = False
-            timeout_triggered = False      # 新增：標記是否觸發了120秒超時
+            timeout_triggered = False      #標記是否觸發了120秒超時
 
-            driving_keys_held = True # <--- 【新增】標記油門狀態
+            driving_keys_held = True #標記油門狀態
 
             while self.is_running:
-                # ====== 【新增】跑圖專用暫停處理邏輯 ======
+                #跑圖專用暫停處理邏輯
                 if self.is_paused:
                     if driving_keys_held: # 剛進入暫停，鬆開油門
                         self.hw_key_up("w")
@@ -3922,9 +4081,9 @@ class FH_UltimateBot(ctk.CTk):
                 # =========================================
                 now = time.time()
                 
-                # 【新增邏輯】：120秒超時防卡死檢測
-                if now - race_start_time > 120.0:
-                    self.log("跑圖超時(已超過120秒)！觸發強制重開賽事邏輯...")
+                race_timeout = self.config.get("race_timeout", 180)
+                if now - race_start_time > race_timeout:
+                    self.log("跑圖超時(已超過180秒)！觸發強制重開賽事邏輯...")
                     timeout_triggered = True
                     break
                 
@@ -3955,7 +4114,7 @@ class FH_UltimateBot(ctk.CTk):
                         break
                     last_chk = now
                     
-                time.sleep(0.3)
+                time.sleep(0.5)
                 
             # 無論正常結束還是超時，都必須先鬆開油門和方向
             self.hw_key_up("w")
@@ -3964,7 +4123,7 @@ class FH_UltimateBot(ctk.CTk):
             if not self.is_running:
                 return False
 
-            # ====== 【新增】：執行超時重置操作 ======
+            # ======執行超時重置操作 ======
             if timeout_triggered:
                 time.sleep(0.5)
                 self.hw_press("esc")
@@ -3975,7 +4134,7 @@ class FH_UltimateBot(ctk.CTk):
                 if pos_restarta:
                     self.log("找到重新開始，點擊重開賽事...")
                     self.game_click(pos_restarta)
-                    time.sleep(1.0)
+                    time.sleep(1.5)
                     self.hw_press("enter")  # 地平線重開賽事通常有確認彈窗，按一次回車確認
                     time.sleep(4.0)         # 等待黑屏重載入動畫
                 else:
@@ -3998,7 +4157,7 @@ class FH_UltimateBot(ctk.CTk):
                 time.sleep(2.0)
 
             self.race_counter += 1
-            self.update_running_ui("迴圈跑圖", self.race_counter, target_count)
+            self.update_running_ui("循環跑圖", self.race_counter, target_count)
 
         return True
 
@@ -4147,7 +4306,7 @@ class FH_UltimateBot(ctk.CTk):
             return True
 
         self.update_running_ui("超級抽獎", self.cj_counter, target_count)
-        # 【新增】：初始化記憶頁碼
+        #初始化記憶頁碼
         if not hasattr(self, 'memory_car_page'):
             self.memory_car_page = 0
         self.log("準備驗證/進入菜單...")
@@ -4235,7 +4394,7 @@ class FH_UltimateBot(ctk.CTk):
                     return False
 
                 brand_pos = self.wait_for_any_image_gray(
-                    ["CCCbrand.png"],
+                    ["CCbrand.png"],
                     region=self.regions["全介面"],
                     threshold=0.75,
                     timeout=0.8,
@@ -4574,7 +4733,7 @@ class FH_UltimateBot(ctk.CTk):
         return True
     
     def find_and_remove_consumable_car(self, target_count):
-        # ====== 【新增】：任務內鎖定，每次進入任務強制重置詳情狀態鎖 ======
+        # ======任務內鎖定，每次進入任務強制重置詳情狀態鎖 ======
         self.detail_state_confirmed = False
         if self.sc_count >= target_count:
             return True
@@ -4687,7 +4846,7 @@ class FH_UltimateBot(ctk.CTk):
                 
 
             brand_pos = self.wait_for_any_image_gray(
-                ["CCCbrand.png"],
+                ["CCbrand.png"],
                 region=self.regions["全介面"],
                 threshold=0.75,
                 timeout=0.8,
@@ -4751,7 +4910,7 @@ class FH_UltimateBot(ctk.CTk):
                 if not_found_pages >= 5:
                     self.log("=連續翻找 5 頁仍未搜索到目標車輛！視為車輛已全部清理完畢。")
                     self.log("主動結束清理任務，準備進入下一步驟...")
-                    break  # 直接跳出迴圈，結束當前任務
+                    break  # 直接跳出循環，結束當前任務
                     
                 self.log(f"當前頁面未找到，向右翻頁尋找... (第 {not_found_pages} 次翻頁)")
                 for _ in range(4):
@@ -4807,7 +4966,7 @@ class FH_UltimateBot(ctk.CTk):
             self.update_running_ui("移除車輛", self.sc_count, target_count)
             self.log(f"成功移除車輛！當前進度: {self.sc_count}/{target_count}")
 
-        # 迴圈結束，退回上一級
+        # 循環結束，退回上一級
         for _ in range(3):
             if not self.is_running:
                 return False
@@ -4815,7 +4974,6 @@ class FH_UltimateBot(ctk.CTk):
             time.sleep(1.0)
 
         return True
- 
     # ==========================================
     # --- 模組：開抽 ---
     # ==========================================
@@ -4932,7 +5090,7 @@ class FH_UltimateBot(ctk.CTk):
         self.spin_counter = 1
         self.update_running_ui("開抽", 1, 1)
         return True
-
+    
     #===============================
     #---自動超級抽獎-----
     #===============================
